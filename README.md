@@ -1,5 +1,7 @@
 # OpenSC — Open Shadow Company
 
+Репозиторий: [STG-44/opensc](https://github.com/STG-44/opensc).
+
 Нативный лаунчер на **Rust** для проекта нового движка **Shadow Company: Left for Dead**. Исходный код поддерживает macOS (Intel / Apple Silicon), Windows x64 и Linux x64. Сам движок подключается отдельным выпуском позже.
 
 ## Что работает
@@ -71,7 +73,7 @@ python3 scripts/publish_release.py \
 
 ## Сборки для трёх систем
 
-Workflow `.github/workflows/build.yml` запускает тесты и создаёт отдельные архивы для macOS Intel, macOS Apple Silicon, Windows x64 и Linux x64. Он подготовлен для размещения в GitHub; фактический запуск workflow в рамках этой работы не выполнялся.
+Workflow `.github/workflows/build.yml` запускает тесты и создаёт отдельные архивы для macOS Intel, macOS Apple Silicon, Windows x64 и Linux x64. [Запуски и результаты сборок](https://github.com/STG-44/opensc/actions/workflows/build.yml) доступны в GitHub Actions. Готовые архивы находятся в разделе Artifacts успешно завершённого запуска.
 
 Локальная упаковка готового исполняемого файла:
 
