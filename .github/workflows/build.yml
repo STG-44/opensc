@@ -28,7 +28,7 @@ jobs:
             executable: opensc-launcher
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Linux build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libegl1-mesa-dev libgtk-3-dev
@@ -40,7 +40,7 @@ jobs:
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package
         run: python scripts/package_launcher.py --binary target/${{ matrix.target }}/release/${{ matrix.executable }} --platform ${{ matrix.platform }} --output dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: opensc-launcher-${{ matrix.platform }}
           path: dist/*
