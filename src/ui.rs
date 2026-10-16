@@ -560,7 +560,7 @@ fn eyebrow(ui: &mut egui::Ui, text: &str) {
 fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(PANEL)
-        .stroke(Stroke::new(1.0, Color32::from_rgb(49, 61, 51)))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(49, 61, 51)))
         .corner_radius(8)
         .inner_margin(20)
         .show(ui, |ui| {
