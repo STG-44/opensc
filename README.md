@@ -73,9 +73,18 @@ python3 scripts/publish_release.py \
 
 Лаунчер принимает HTTPS и файлы с того же сервера; HTTP разрешён только для локального тестового сервера. При перенаправлениях сохраняется тот же сервер. Манифест определяет пути файлов, но не команды оболочки. SHA-256 проверяет целостность; доверие к выпуску основано на HTTPS и доступе к серверу. Отдельная подпись манифеста пока не реализована.
 
-## Сборки для трёх систем
+## Установщики для трёх систем
 
-Workflow `.github/workflows/build.yml` запускает тесты и создаёт отдельные архивы для macOS Intel, macOS Apple Silicon, Windows x64 и Linux x64. [Запуски и результаты сборок](https://github.com/STG-44/opensc/actions/workflows/build.yml) доступны в GitHub Actions. Готовые архивы находятся в разделе Artifacts успешно завершённого запуска.
+Workflow `.github/workflows/build.yml` запускает тесты и создаёт установщики и переносимые архивы для четырёх платформ. [Запуски и результаты сборок](https://github.com/STG-44/opensc/actions/workflows/build.yml) доступны в GitHub Actions, готовые файлы — в Artifacts успешного запуска.
+
+| Система | Основной формат | Дополнительно |
+| --- | --- | --- |
+| macOS Intel / Apple Silicon | DMG с приложением и ссылкой на Applications | ZIP с `.app` |
+| Windows x64 | Setup.exe, установка для текущего пользователя, удаление через настройки Windows | ZIP |
+| CachyOS / Arch Linux x64 | `.pkg.tar.zst` для pacman | AppImage, tar.gz |
+| Современный Linux x64 | AppImage | DEB для Debian/Ubuntu, tar.gz |
+
+Минимум для готовых Linux-сборок — glibc 2.39; графические библиотеки X11/Wayland и OpenGL должны быть установлены. AppImage может потребовать FUSE 2; режим `--appimage-extract-and-run` работает без FUSE. Для CachyOS: `sudo pacman -U opensc-launcher-0.2.0-linux-x86_64.pkg.tar.zst`. Пакет называется `opensc-launcher`, чтобы не пересекаться с системным пакетом OpenSC для смарт-карт.
 
 Локальная упаковка готового исполняемого файла:
 
@@ -83,14 +92,16 @@ Workflow `.github/workflows/build.yml` запускает тесты и созд
 python3 scripts/package_launcher.py \
   --binary target/release/opensc-launcher \
   --platform macos-x86_64 \
-  --output dist
+  --output dist --installers
 ```
 
-macOS-пакет подписывается локальной ad-hoc подписью. Для публичного релиза приложения можно добавить Developer ID и нотариализацию. Ресурсы игры и движок не входят в архив лаунчера.
+Установщики создаются на соответствующей системе: macOS использует `sips`, `iconutil`, `codesign`, `hdiutil`; Windows — Inno Setup 6; Linux — `dpkg-deb`, GNU tar, zstd и appimagetool с закреплённым SHA-256. Без `--installers` создаётся только переносимый архив. `scripts/test_installers.py` проверяет установку в изолированном временном каталоге; CI дополнительно устанавливает и удаляет Arch-пакет через pacman в контейнере.
+
+macOS-пакет имеет ad-hoc подпись без Developer ID и нотариализации Apple, Windows-пакет не подписан. Это тестовые сборки; системная защита может ограничить первый запуск. Игровой движок и данные, необходимые для игры, поставляются отдельно. Для оформления использована карта из переданных ресурсов игры; значок OpenSC создан в проекте (`scripts/make_icons.py`).
 
 ## Страница загрузки
 
-`deploy/site/index.html` — опубликованная статическая страница сайта. Она содержит прямые ссылки на четыре архива лаунчера, контрольные суммы и инструкции начала работы. Подготовка файлов и порядок публикации описаны в [deploy/README.md](deploy/README.md). Двоичные файлы из `deploy/site/downloads/` не хранятся в Git. Манифест обновлений движка пока остаётся с `release: null`.
+`deploy/site/index.html` — статическая страница нового выпуска 0.2.0 с установщиками, переносимыми архивами, контрольными суммами и инструкциями начала работы. Карта и реальный снимок окна находятся в `deploy/site/assets/`. Подготовка файлов и порядок публикации описаны в [deploy/README.md](deploy/README.md). Двоичные файлы из `deploy/site/downloads/` не хранятся в Git. Манифест обновлений движка пока остаётся с `release: null`.
 
 ## Зафиксированное состояние площадки
 
