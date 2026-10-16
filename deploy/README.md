@@ -5,6 +5,13 @@
 Traefik, DNS и сертификат уже настроены; для этой публикации нужен доступ к папке,
 которую раздаёт существующий веб-сервер.
 
+Сайт опубликован 16 октября 2026 года. Корневая папка на сервере:
+`/mnt/data/shadow-company/public`. Контейнер `shadow_company_files` подключает её
+в `/srv/shadow` только для чтения; изменение файлов на хосте не требует перезапуска
+контейнера. Конфигурация сайта находится в `/opt/shadow-company/nginx.conf`.
+Резервная копия перед первой публикацией хранится вне публичной папки, в каталоге
+`/mnt/data/shadow-company/deployments/opensc-0.1.0-4xgScYP9/backup-before.tar.gz`.
+
 ## Файлы раздачи
 
 В каталоге сайта должны находиться:
@@ -19,6 +26,7 @@ downloads/
   SHA256SUMS.txt
   build-info.json
 updates/
+  index.html
   manifest-v1.json
 ```
 
