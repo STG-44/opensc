@@ -39,7 +39,7 @@ fn run() -> Result<()> {
             let url = args.next().unwrap_or(config.manifest_url);
             match updater::check(&url)? {
                 None => {
-                    println!("Тестовые сборки ещё не опубликованы. Сервер обновлений доступен.")
+                    println!("Движок ещё не опубликован. Сервер обновлений доступен.")
                 }
                 Some(available) => {
                     println!(
@@ -69,11 +69,20 @@ fn run() -> Result<()> {
             } else {
                 None
             };
+            let icon =
+                image::load_from_memory(include_bytes!("../assets/opensc.png"))?.into_rgba8();
+            let icon = eframe::egui::IconData {
+                width: icon.width(),
+                height: icon.height(),
+                rgba: icon.into_raw(),
+            };
             let options = eframe::NativeOptions {
                 viewport: eframe::egui::ViewportBuilder::default()
                     .with_title("OpenSC Launcher")
-                    .with_inner_size([1024.0, 730.0])
-                    .with_min_inner_size([760.0, 620.0]),
+                    .with_app_id("opensc-launcher")
+                    .with_inner_size([1100.0, 820.0])
+                    .with_min_inner_size([760.0, 680.0])
+                    .with_icon(icon),
                 ..Default::default()
             };
             eframe::run_native(

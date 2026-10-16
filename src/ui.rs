@@ -15,9 +15,10 @@ use std::{
     time::Duration,
 };
 
-const ACCENT: Color32 = Color32::from_rgb(211, 180, 100);
-const MUTED: Color32 = Color32::from_rgb(149, 160, 154);
-const PANEL: Color32 = Color32::from_rgb(24, 32, 29);
+const ACCENT: Color32 = Color32::from_rgb(218, 177, 103);
+const MUTED: Color32 = Color32::from_rgb(161, 173, 163);
+const PANEL: Color32 = Color32::from_rgb(24, 31, 26);
+const BACKGROUND: Color32 = Color32::from_rgb(13, 18, 15);
 
 enum Event {
     Checked(Result<Option<Available>, String>),
@@ -42,22 +43,40 @@ pub struct Launcher {
     settings: bool,
     child: Option<Child>,
     inspected_path: Option<String>,
+    hero: Option<egui::TextureHandle>,
 }
 
 impl Launcher {
     pub fn new(cc: &eframe::CreationContext<'_>, root: PathBuf, data: Option<String>) -> Self {
         let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = Color32::from_rgb(16, 23, 20);
+        visuals.panel_fill = BACKGROUND;
         visuals.window_fill = PANEL;
         visuals.extreme_bg_color = Color32::from_rgb(12, 18, 15);
         visuals.selection.bg_fill = Color32::from_rgb(82, 79, 44);
         visuals.widgets.inactive.bg_fill = Color32::from_rgb(40, 50, 44);
         visuals.widgets.hovered.bg_fill = Color32::from_rgb(57, 68, 54);
+        visuals.override_text_color = Some(Color32::from_rgb(237, 237, 222));
+        visuals.hyperlink_color = ACCENT;
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
         cc.egui_ctx.set_visuals(visuals);
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.item_spacing = Vec2::new(12.0, 10.0);
         style.spacing.button_padding = Vec2::new(16.0, 11.0);
         cc.egui_ctx.set_style(style);
+        let hero =
+            image::load_from_memory(include_bytes!("../deploy/site/assets/operation-map.jpg"))
+                .ok()
+                .map(|image| {
+                    let image = image.into_rgba8();
+                    let size = [image.width() as usize, image.height() as usize];
+                    cc.egui_ctx.load_texture(
+                        "operation-map",
+                        egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
+                        egui::TextureOptions::LINEAR,
+                    )
+                });
         let loaded = Config::load(&root);
         let error = loaded.as_ref().err().map(|e| format!("{e:#}"));
         let mut config = loaded.unwrap_or_default();
@@ -81,6 +100,7 @@ impl Launcher {
             settings: false,
             child: None,
             inspected_path: None,
+            hero,
         };
         launcher.check(&cc.egui_ctx);
         launcher
@@ -200,7 +220,7 @@ impl Launcher {
                     self.available = Some(available);
                 }
                 Event::Checked(Ok(None)) => {
-                    self.status = "Сервер доступен. Сборки ещё не опубликованы".into()
+                    self.status = "Сервер доступен. Движок ещё не опубликован".into()
                 }
                 Event::Inspected(Ok(inventory)) => {
                     self.status = format!("В папке ресурсов {} файлов", inventory.files);
@@ -259,7 +279,7 @@ impl Launcher {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!self.busy(), |ui| {
-                    let width = (ui.available_width() - 145.0).max(200.0);
+                    let width = (ui.available_width() - 175.0).max(200.0);
                     if ui
                         .add_sized(
                             [width, 36.0],
@@ -270,7 +290,14 @@ impl Launcher {
                     {
                         self.inventory = None;
                     }
-                    if ui.button("Выбрать…").clicked()
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Выбрать папку").strong().color(BACKGROUND),
+                            )
+                            .fill(ACCENT),
+                        )
+                        .clicked()
                         && let Some(path) = rfd::FileDialog::new()
                             .set_title("Ресурсы Shadow Company")
                             .pick_folder()
@@ -317,6 +344,71 @@ impl Launcher {
             }
         });
     }
+
+    fn hero(&self, ui: &mut egui::Ui) {
+        let (rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 192.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0, PANEL);
+        if let Some(texture) = &self.hero {
+            let uv_height = ((16.0_f32 / 9.0) / rect.aspect_ratio()).min(1.0);
+            let uv = egui::Rect::from_min_max(
+                egui::pos2(0.0, (1.0 - uv_height) * 0.5),
+                egui::pos2(1.0, (1.0 + uv_height) * 0.5),
+            );
+            painter.image(texture.id(), rect, uv, Color32::from_white_alpha(180));
+        }
+        let split = rect.left() + rect.width() * 0.4;
+        painter.rect_filled(
+            egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom())),
+            0,
+            Color32::from_rgb(18, 25, 20),
+        );
+        let mut fade = egui::Mesh::default();
+        let left = Color32::from_rgb(18, 25, 20);
+        let right = Color32::from_black_alpha(35);
+        fade.colored_vertex(egui::pos2(split, rect.top()), left);
+        fade.colored_vertex(rect.right_top(), right);
+        fade.colored_vertex(egui::pos2(split, rect.bottom()), left);
+        fade.colored_vertex(rect.right_bottom(), right);
+        fade.indices.extend_from_slice(&[0, 1, 2, 1, 3, 2]);
+        painter.add(egui::Shape::mesh(fade));
+        painter.rect_stroke(
+            rect,
+            0,
+            Stroke::new(1.0_f32, Color32::from_rgb(61, 71, 50)),
+            egui::StrokeKind::Inside,
+        );
+        let at = |x, y| rect.min + Vec2::new(x, y);
+        painter.text(
+            at(24.0, 22.0),
+            egui::Align2::LEFT_TOP,
+            "OPEN SHADOW COMPANY",
+            FontId::monospace(10.0),
+            ACCENT,
+        );
+        painter.text(
+            at(22.0, 48.0),
+            egui::Align2::LEFT_TOP,
+            "Вернуться в строй.",
+            FontId::proportional(40.0),
+            Color32::from_rgb(243, 239, 222),
+        );
+        painter.text(
+            at(24.0, 103.0),
+            egui::Align2::LEFT_TOP,
+            "Shadow Company: Left for Dead",
+            FontId::proportional(15.0),
+            MUTED,
+        );
+        painter.text(
+            at(24.0, 151.0),
+            egui::Align2::LEFT_TOP,
+            "РЕСУРСЫ ОРИГИНАЛА  /  НОВЫЙ ДВИЖОК",
+            FontId::monospace(10.0),
+            ACCENT,
+        );
+    }
 }
 
 impl Launcher {
@@ -342,8 +434,57 @@ impl eframe::App for Launcher {
         if self.busy() || self.child.is_some() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        egui::TopBottomPanel::top("header")
+            .frame(
+                egui::Frame::new()
+                    .fill(BACKGROUND)
+                    .inner_margin(egui::Margin::symmetric(24, 14)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (mark, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                    let painter = ui.painter();
+                    painter.rect_stroke(
+                        mark.shrink(4.0),
+                        0,
+                        Stroke::new(1.0_f32, ACCENT),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.line_segment(
+                        [mark.left_center(), mark.right_center()],
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                    painter.line_segment(
+                        [mark.center_top(), mark.center_bottom()],
+                        Stroke::new(1.0_f32, ACCENT),
+                    );
+                    ui.label(RichText::new("OpenSC").size(23.0).strong());
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new("ПОДГОТОВКА К ЗАПУСКУ")
+                            .monospace()
+                            .size(10.0)
+                            .color(MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "ТЕСТОВЫЙ ВЫПУСК  {}",
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .monospace()
+                            .size(10.0)
+                            .color(ACCENT),
+                        );
+                    });
+                });
+            });
         egui::TopBottomPanel::bottom("footer")
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(16))
+            .frame(
+                egui::Frame::new()
+                    .fill(PANEL)
+                    .inner_margin(egui::Margin::symmetric(24, 10)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -366,22 +507,11 @@ impl eframe::App for Launcher {
                 });
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(32))
+            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(24))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    eyebrow(ui, "OPENSC / OPEN SHADOW COMPANY");
-                    ui.label(
-                        RichText::new("Вернуться в строй.")
-                            .font(FontId::proportional(38.0))
-                            .strong()
-                            .color(Color32::from_rgb(237, 239, 224)),
-                    );
-                    ui.label(
-                        RichText::new("Установка, обновления и запуск нового движка")
-                            .size(16.0)
-                            .color(MUTED),
-                    );
-                    ui.add_space(14.0);
+                    self.hero(ui);
+                    ui.add_space(10.0);
                     card(ui, |ui| {
                         eyebrow(ui, "01 / ДВИЖОК");
                         let title = self
@@ -393,7 +523,7 @@ impl eframe::App for Launcher {
                         if self.installed.is_none() {
                             ui.label(
                                 RichText::new(
-                                    "После публикации сборки её можно будет установить здесь.",
+                                    "Сейчас можно подготовить ресурсы. Движок будет доступен позже.",
                                 )
                                 .color(MUTED),
                             );
@@ -561,8 +691,8 @@ fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(PANEL)
         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(49, 61, 51)))
-        .corner_radius(8)
-        .inner_margin(20)
+        .corner_radius(4)
+        .inner_margin(18)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             contents(ui);
