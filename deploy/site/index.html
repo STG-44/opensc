@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eeece3">
+  <meta name="description" content="OpenSC — Open Shadow Company. Скачать тестовый Rust-лаунчер 0.1.0 для macOS, Windows и Linux. Движок игры будет опубликован позже.">
+  <title>OpenSC — лаунчер Shadow Company</title>
+  <style>
+    :root {
+      --paper: #eeece3;
+      --ink: #23261f;
+      --muted: #5d6257;
+      --line: #b9bcae;
+      --olive: #343f2c;
+      --olive-light: #d5dcc7;
+      --orange: #af3e16;
+      --white: #faf9f2;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: "Helvetica Neue", Helvetica, "Segoe UI", sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+    a { color: inherit; text-underline-offset: 4px; }
+    a:focus-visible { outline: 3px solid var(--orange); outline-offset: 5px; }
+    ::selection { background: var(--olive); color: var(--white); }
+    .shell { width: min(1240px, calc(100% - 96px)); margin-inline: auto; }
+    .mono { font-family: var(--mono); font-size: 11px; line-height: 1.5; letter-spacing: .1em; text-transform: uppercase; }
+    .skip { position: absolute; top: 12px; left: 12px; z-index: 3; padding: 12px 20px; background: var(--ink); color: var(--white); transform: translateY(-160%); }
+    .skip:focus { transform: translateY(0); }
+    .masthead { display: flex; align-items: center; justify-content: space-between; min-height: 91px; border-bottom: 1px solid var(--ink); gap: 32px; }
+    .brand { display: inline-flex; gap: 14px; align-items: center; text-decoration: none; }
+    .brand-mark { width: 25px; height: 25px; position: relative; border: 1px solid var(--ink); }
+    .brand-mark::before, .brand-mark::after { content: ""; position: absolute; background: var(--ink); }
+    .brand-mark::before { height: 1px; width: 35px; left: -6px; top: 11px; }
+    .brand-mark::after { width: 1px; height: 35px; top: -6px; left: 11px; }
+    .brand-name { font-size: 22px; font-weight: 800; letter-spacing: -.06em; }
+    .brand-caption { margin-left: 10px; color: var(--muted); }
+    nav { display: flex; align-items: center; gap: 34px; }
+    nav a { font-size: 13px; text-decoration: none; border-bottom: 1px solid transparent; padding-block: 7px; }
+    nav a:hover { border-bottom-color: var(--ink); }
+    .version { color: var(--muted); }
+    .hero { padding-block: 38px 68px; }
+    .hero-overline { display: flex; justify-content: space-between; align-items: center; gap: 20px; color: var(--muted); }
+    .signal { color: var(--orange); display: flex; align-items: center; gap: 8px; }
+    .signal::before { content: ""; width: 7px; height: 7px; background: var(--orange); }
+    .wordmark-wrap { position: relative; padding-top: 20px; margin-bottom: 32px; }
+    h1 { font-size: clamp(110px, 18.1vw, 246px); line-height: .93; letter-spacing: -.083em; font-weight: 800; margin: 0 0 0 -9px; }
+    .registration { position: absolute; right: 3px; bottom: 10px; color: var(--muted); writing-mode: vertical-rl; }
+    .wordmark-rule { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+    .wordmark-rule::before { content: ""; width: 38px; height: 5px; background: var(--orange); }
+    .wordmark-rule::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .hero-bottom { display: grid; grid-template-columns: 1.4fr 1fr; gap: 84px; align-items: start; }
+    .intro { padding-top: 5px; }
+    .intro h2 { max-width: 640px; font-size: clamp(27px, 3vw, 40px); line-height: 1.13; letter-spacing: -.035em; font-weight: 500; margin: 0 0 19px; }
+    .intro p { font-size: 16px; line-height: 1.6; color: var(--muted); max-width: 530px; margin: 0 0 26px; }
+    .primary { display: inline-flex; align-items: center; gap: 34px; min-height: 49px; padding: 0 20px; background: var(--ink); color: var(--white); text-decoration: none; font-size: 14px; font-weight: 600; transition: background .18s ease, gap .18s ease; }
+    .primary:hover { background: var(--olive); gap: 43px; }
+    .primary:active { background: #192015; }
+    .arrow { font-size: 20px; font-weight: 400; }
+    .briefing { background: var(--olive); color: var(--white); padding: 25px 28px 27px; position: relative; }
+    .briefing::before { content: ""; width: 15px; height: 15px; position: absolute; right: 15px; top: 15px; border-top: 1px solid #81906c; border-right: 1px solid #81906c; }
+    .briefing .mono { color: var(--olive-light); margin: 0 0 23px; }
+    .status { display: flex; gap: 12px; align-items: flex-start; padding-block: 12px; border-top: 1px solid #69755d; }
+    .status:last-child { padding-bottom: 0; }
+    .status-symbol { width: 17px; flex: 0 0 17px; line-height: 22px; font-family: var(--mono); font-size: 16px; color: #c8d4af; }
+    .status p { font-size: 14px; line-height: 1.5; margin: 0; }
+    .status strong { font-weight: 600; }
+    .status span.detail { display: block; color: #d4dacb; font-size: 12px; margin-top: 3px; }
+    .downloads { padding-block: 40px 48px; border-top: 1px solid var(--ink); }
+    .section-head { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; align-items: baseline; margin-bottom: 30px; }
+    .section-label { margin: 0; color: var(--muted); }
+    .section-head h2 { margin: 0; font-size: 35px; line-height: 1.15; letter-spacing: -.04em; font-weight: 500; }
+    .download-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--ink); }
+    .download-item { display: grid; grid-template-columns: 54px 1.06fr 1fr 75px 135px; gap: 18px; align-items: center; min-height: 89px; border-bottom: 1px solid var(--line); }
+    .download-no { font-family: var(--mono); color: var(--muted); font-size: 11px; }
+    .platform { font-size: 24px; font-weight: 500; letter-spacing: -.035em; }
+    .architecture { font-size: 14px; color: var(--muted); }
+    .file-type { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .download-link { display: inline-flex; gap: 25px; min-height: 42px; align-items: center; justify-content: space-between; padding-inline: 14px; border: 1px solid var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; transition: background .16s, color .16s; }
+    .download-link:hover { color: var(--white); background: var(--ink); }
+    .download-link:active { color: var(--white); background: var(--olive); }
+    .download-notes { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; margin-top: 26px; }
+    .checksum { font-family: var(--mono); font-size: 11px; align-self: start; line-height: 1.6; }
+    .checksum a { display: inline-flex; align-items: center; gap: 8px; }
+    .compatibility { font-size: 12px; color: var(--muted); line-height: 1.65; margin: 0; max-width: 690px; }
+    .compatibility strong { font-weight: 600; color: var(--ink); }
+    .start { border-top: 1px solid var(--ink); padding-block: 40px 58px; }
+    .steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); margin: 38px 0 0; gap: 45px; }
+    .steps li { position: relative; padding-top: 18px; border-top: 1px solid var(--line); }
+    .step-index { display: block; font-family: var(--mono); color: var(--orange); font-size: 12px; margin-bottom: 23px; }
+    .steps h3 { font-size: 19px; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; margin: 0 0 11px; }
+    .steps p { font-size: 14px; line-height: 1.65; color: var(--muted); margin: 0; }
+    .steps code { font-family: var(--mono); font-size: .9em; color: var(--ink); }
+    .engine-note { display: flex; gap: 16px; align-items: baseline; padding: 18px 0 0; margin-top: 32px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--muted); }
+    .engine-note .mono { flex: 0 0 auto; color: var(--orange); font-size: 10px; }
+    footer { border-top: 1px solid var(--ink); display: flex; justify-content: space-between; align-items: center; gap: 30px; padding-block: 24px 32px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    footer .footer-brand { color: var(--ink); font-size: 14px; font-weight: 600; }
+    footer p { margin: 0; }
+    .reveal { animation: arrive .6s both; }
+    .hero-bottom.reveal { animation-delay: .1s; }
+    @keyframes arrive { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @media (min-width: 1440px) { h1 { font-size: 246px; } }
+    @media (max-width: 1000px) {
+      .shell { width: calc(100% - 56px); }
+      .brand-caption { display: none; }
+      .hero-bottom { gap: 38px; grid-template-columns: 1.15fr 1fr; }
+      .intro h2 { font-size: 30px; }
+      .briefing { padding: 24px; }
+      .download-item { grid-template-columns: 35px 1fr 1fr 60px 128px; gap: 12px; }
+      .steps { gap: 28px; }
+      .section-head, .download-notes { grid-template-columns: 1fr 2.3fr; }
+    }
+    @media (max-width: 700px) {
+      .shell { width: calc(100% - 36px); }
+      .masthead { min-height: 75px; gap: 12px; }
+      .brand { gap: 10px; }
+      .brand-mark { transform: scale(.8); }
+      .brand-name { font-size: 20px; }
+      nav { gap: 17px; }
+      nav a { font-size: 12px; }
+      .version { display: none; }
+      .hero { padding-block: 27px 40px; }
+      .hero-overline { font-size: 9px; letter-spacing: .055em; }
+      .signal { gap: 6px; }
+      .wordmark-wrap { padding-top: 28px; margin-bottom: 27px; }
+      h1 { font-size: clamp(98px, 24vw, 166px); margin-left: -5px; }
+      .registration { display: none; }
+      .wordmark-rule { margin-top: 19px; font-size: 9px; letter-spacing: .08em; }
+      .wordmark-rule::before { width: 26px; height: 4px; }
+      .hero-bottom { display: block; }
+      .intro h2 { max-width: 500px; font-size: 29px; margin-bottom: 16px; }
+      .intro p { font-size: 15px; margin-bottom: 23px; }
+      .primary { min-height: 47px; }
+      .briefing { margin-top: 32px; padding: 23px; }
+      .briefing .mono { margin-bottom: 19px; }
+      .downloads, .start { padding-block: 29px 36px; }
+      .section-head { display: block; margin-bottom: 25px; }
+      .section-label { margin-bottom: 12px; font-size: 10px; }
+      .section-head h2 { font-size: 31px; }
+      .download-item { grid-template-columns: 26px minmax(0, 1fr) 116px; column-gap: 10px; row-gap: 0; padding-block: 19px; min-height: 100px; }
+      .download-no { grid-row: span 2; align-self: start; padding-top: 5px; font-size: 10px; }
+      .platform { font-size: 22px; align-self: end; }
+      .architecture { grid-column: 2; grid-row: 2; font-size: 12px; align-self: start; padding-top: 5px; }
+      .file-type { display: none; }
+      .download-link { grid-column: 3; grid-row: span 2; min-height: 43px; font-size: 12px; gap: 12px; padding-inline: 12px; }
+      .download-notes { display: flex; flex-direction: column; gap: 21px; margin-top: 23px; }
+      .checksum { order: 2; }
+      .compatibility { font-size: 11px; line-height: 1.7; }
+      .steps { display: block; margin-top: 25px; }
+      .steps li { padding: 20px 0 23px 43px; }
+      .steps li:last-child { padding-bottom: 0; }
+      .step-index { position: absolute; left: 0; top: 24px; margin-bottom: 0; font-size: 11px; }
+      .steps h3 { font-size: 19px; margin-bottom: 8px; }
+      .steps p { font-size: 13px; }
+      .engine-note { display: block; margin-top: 25px; padding-top: 17px; }
+      .engine-note .mono { display: block; margin-bottom: 6px; }
+      footer { align-items: start; gap: 16px; padding-block: 21px 28px; font-size: 10px; }
+      footer p:last-child { text-align: right; max-width: 170px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#downloads">Перейти к загрузкам</a>
+  <div class="shell">
+    <header class="masthead">
+      <a class="brand" href="#top" aria-label="OpenSC — в начало страницы">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">OpenSC</span>
+        <span class="brand-caption mono">Open Shadow Company</span>
+      </a>
+      <nav aria-label="Основная навигация">
+        <a href="#downloads">Загрузки</a>
+        <a href="#start">Как начать</a>
+        <span class="version mono">v.0.1.0</span>
+      </nav>
+    </header>
+    <main id="top">
+      <section class="hero" aria-labelledby="project-name">
+        <div class="hero-overline mono">
+          <span>Shadow Company: Left for Dead</span>
+          <span class="signal">Тестовая сборка</span>
+        </div>
+        <div class="wordmark-wrap reveal">
+          <h1 id="project-name">OpenSC</h1>
+          <span class="registration mono" aria-hidden="true">SC / 001</span>
+          <div class="wordmark-rule mono">Open Shadow Company</div>
+        </div>
+        <div class="hero-bottom reveal">
+          <div class="intro">
+            <h2>Возвращение начинается<br>с лаунчера.</h2>
+            <p>OpenSC — нативный лаунчер на Rust для Shadow Company: Left for Dead. Подготовьте ресурсы оригинала; новый движок подключим следующим этапом.</p>
+            <a class="primary" href="#downloads">Скачать лаунчер <span class="arrow" aria-hidden="true">↓</span></a>
+          </div>
+          <aside class="briefing" aria-label="Текущее состояние проекта">
+            <p class="mono">Состояние проекта / 0.1.0</p>
+            <div class="status">
+              <span class="status-symbol" aria-hidden="true">+</span>
+              <p><strong>Лаунчер готов к загрузке</strong><span class="detail">macOS · Windows · Linux</span></p>
+            </div>
+            <div class="status">
+              <span class="status-symbol" aria-hidden="true">—</span>
+              <p><strong>Движок появится позже</strong><span class="detail">Сейчас запустить игру через лаунчер ещё нельзя.</span></p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="downloads" class="downloads" aria-labelledby="downloads-title">
+        <div class="section-head">
+          <p class="section-label mono">01 / Загрузки</p>
+          <h2 id="downloads-title">Выберите платформу.</h2>
+        </div>
+        <ul class="download-list">
+          <li class="download-item">
+            <span class="download-no" aria-hidden="true">01</span>
+            <span class="platform">macOS</span>
+            <span class="architecture">Apple Silicon · M1 и новее</span>
+            <span class="file-type">.zip</span>
+            <a class="download-link" href="/downloads/opensc-launcher-0.1.0-macos-aarch64.zip" aria-label="Скачать OpenSC 0.1.0 для macOS Apple Silicon, ZIP">Скачать <span class="arrow" aria-hidden="true">↓</span></a>
+          </li>
+          <li class="download-item">
+            <span class="download-no" aria-hidden="true">02</span>
+            <span class="platform">macOS</span>
+            <span class="architecture">Intel · x86_64</span>
+            <span class="file-type">.zip</span>
+            <a class="download-link" href="/downloads/opensc-launcher-0.1.0-macos-x86_64.zip" aria-label="Скачать OpenSC 0.1.0 для macOS Intel, ZIP">Скачать <span class="arrow" aria-hidden="true">↓</span></a>
+          </li>
+          <li class="download-item">
+            <span class="download-no" aria-hidden="true">03</span>
+            <span class="platform">Windows</span>
+            <span class="architecture">64 бит · x86_64</span>
+            <span class="file-type">.zip</span>
+            <a class="download-link" href="/downloads/opensc-launcher-0.1.0-windows-x86_64.zip" aria-label="Скачать OpenSC 0.1.0 для Windows x64, ZIP">Скачать <span class="arrow" aria-hidden="true">↓</span></a>
+          </li>
+          <li class="download-item">
+            <span class="download-no" aria-hidden="true">04</span>
+            <span class="platform">Linux</span>
+            <span class="architecture">Ubuntu 24.04 · x86_64</span>
+            <span class="file-type">.tar.gz</span>
+            <a class="download-link" href="/downloads/opensc-launcher-0.1.0-linux-x86_64.tar.gz" aria-label="Скачать OpenSC 0.1.0 для Linux x64, TAR.GZ">Скачать <span class="arrow" aria-hidden="true">↓</span></a>
+          </li>
+        </ul>
+        <div class="download-notes">
+          <div class="checksum"><a href="/downloads/SHA256SUMS.txt">Контрольные суммы SHA-256 <span aria-hidden="true">↗</span></a></div>
+          <p class="compatibility"><strong>Перед установкой.</strong> Тестовая сборка macOS подписана локально, без заверения Apple: открытие может потребовать подтверждения в системных настройках. Сборка Windows не подписана. Ресурсы оригинальной игры в архивы не входят.</p>
+        </div>
+      </section>
+
+      <section id="start" class="start" aria-labelledby="start-title">
+        <div class="section-head">
+          <p class="section-label mono">02 / Начало работы</p>
+          <h2 id="start-title">Подготовиться к возвращению.</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-index" aria-hidden="true">01</span>
+            <h3>Распакуйте лаунчер</h3>
+            <p>Скачайте архив для своей системы, распакуйте его и откройте приложение OpenSC.</p>
+          </li>
+          <li>
+            <span class="step-index" aria-hidden="true">02</span>
+            <h3>Укажите ресурсы игры</h3>
+            <p>Выберите папку <code>Data</code> из своей установленной копии Shadow Company: Left for Dead.</p>
+          </li>
+          <li>
+            <span class="step-index" aria-hidden="true">03</span>
+            <h3>Дождитесь движка</h3>
+            <p>Когда движок будет опубликован, его можно будет загрузить через лаунчер. Сейчас доступна подготовка ресурсов.</p>
+          </li>
+        </ol>
+        <div class="engine-note"><span class="mono">Следующий этап</span><span>Подключение нового движка, который будет читать ресурсы оригинальной игры.</span></div>
+      </section>
+    </main>
+    <footer>
+      <p><span class="footer-brand">OpenSC</span><br>Open Shadow Company</p>
+      <p class="mono">Лаунчер 0.1.0<br>Для Shadow Company: Left for Dead</p>
+    </footer>
+  </div>
+</body>
+</html>
