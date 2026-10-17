@@ -1,0 +1,44 @@
+name: Build web server
+on:
+  workflow_dispatch:
+  push:
+    paths: ['server/**', '.github/workflows/server.yml']
+
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Static Linux toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup target add x86_64-unknown-linux-musl
+      - run: cargo fmt --manifest-path server/Cargo.toml --check
+      - run: cargo test --manifest-path server/Cargo.toml --locked
+      - run: cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo build --manifest-path server/Cargo.toml --release --locked --target x86_64-unknown-linux-musl
+      - name: Check static container
+        run: |
+          mkdir -p dist
+          cp server/target/x86_64-unknown-linux-musl/release/opensc-web dist/opensc-web
+          cp server/Dockerfile dist/Dockerfile
+          docker build -t opensc-web:check dist
+          docker run -d --name opensc-web-check -p 127.0.0.1:18080:8080 -v "$PWD/deploy/site:/srv/shadow:ro" --read-only --cap-drop ALL --security-opt no-new-privileges:true opensc-web:check
+          for attempt in $(seq 1 20); do
+            if docker exec opensc-web-check /opensc-web --healthcheck; then break; fi
+            sleep 1
+          done
+          docker exec opensc-web-check /opensc-web --healthcheck
+          curl --fail http://127.0.0.1:18080/ -o /dev/null
+          docker rm -f opensc-web-check
+          cd dist
+          sha256sum opensc-web Dockerfile > SHA256SUMS.txt
+          printf '%s\n' "$GITHUB_SHA" > source-commit.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opensc-web-linux-musl
+          path: dist/*
