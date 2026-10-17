@@ -1,0 +1,36 @@
+http:
+  routers:
+    shadow-company-test:
+      rule: 'Host(`shadow-test.zaikinagroup.ru`)'
+      entryPoints: [websecure]
+      service: shadow-company-files
+      middlewares: [opensc-edge-rate, opensc-edge-inflight, opensc-edge-total]
+      tls:
+        certResolver: myresolver
+  middlewares:
+    opensc-edge-rate:
+      rateLimit:
+        average: 180
+        period: 1m
+        burst: 60
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+            ipv6Subnet: 64
+    opensc-edge-inflight:
+      inFlightReq:
+        amount: 20
+        sourceCriterion:
+          ipStrategy:
+            depth: 0
+            ipv6Subnet: 64
+    opensc-edge-total:
+      inFlightReq:
+        amount: 128
+        sourceCriterion:
+          requestHost: true
+  services:
+    shadow-company-files:
+      loadBalancer:
+        servers:
+          - url: http://opensc_web:8080

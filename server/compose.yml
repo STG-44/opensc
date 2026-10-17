@@ -1,0 +1,33 @@
+services:
+  web:
+    image: ${OPENSC_WEB_IMAGE:?Set the verified local image tag}
+    container_name: opensc_web
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 64
+    stop_grace_period: 30s
+    environment:
+      OPENSC_WEB_ROOT: /srv/shadow
+      OPENSC_WEB_BIND: 0.0.0.0:8080
+      OPENSC_TRUSTED_PROXY_HOST: traefik
+    volumes:
+      - /mnt/data/shadow-company/public:/srv/shadow:ro
+    networks: [gateway]
+    healthcheck:
+      test: ["CMD", "/opensc-web", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+networks:
+  gateway:
+    external: true
