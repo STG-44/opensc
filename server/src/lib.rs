@@ -84,7 +84,21 @@ pub fn app(root: PathBuf, state: WebState) -> Router {
 async fn protect(State(state): State<WebState>, request: Request, next: Next) -> Response {
     let raw_path = request.uri().path();
     let decoded = match percent_decode_str(raw_path).decode_utf8() {
-        Ok(path) => path.into_owned(),
+        Ok(path) => {
+            // ServeDir treats repeated slashes as equivalent filesystem paths.
+            // Budget and cache classification must use the same canonical form.
+            let mut normalized = format!(
+                "/{}",
+                path.split('/')
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            );
+            if path.ends_with('/') && normalized != "/" {
+                normalized.push('/');
+            }
+            normalized
+        }
         Err(_) => {
             return finish(
                 error(StatusCode::BAD_REQUEST, "Invalid path.\n", None),
