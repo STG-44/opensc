@@ -184,6 +184,22 @@ async fn changing_query_or_encoding_the_path_cannot_bypass_download_limits() {
         .await
         .unwrap();
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    for path in [
+        "//downloads/game.zip?x=3",
+        "/downloads//game.zip?x=4",
+        "//updates//releases/engine",
+    ] {
+        let alias = app
+            .clone()
+            .oneshot(request(path, "192.0.2.1:12", &[]))
+            .await
+            .unwrap();
+        assert_eq!(
+            alias.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "alias {path}"
+        );
+    }
     let manifest = app
         .oneshot(request("/updates/manifest-v1.json", "192.0.2.1:10", &[]))
         .await
