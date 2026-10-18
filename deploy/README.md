@@ -6,13 +6,26 @@ Traefik, DNS и сертификат уже настроены; для этой 
 которую раздаёт существующий веб-сервер.
 
 Сайт опубликован 16 октября 2026 года. Корневая папка на сервере:
-`/mnt/data/shadow-company/public`. Контейнер `shadow_company_files` подключает её
-в `/srv/shadow` только для чтения; изменение файлов на хосте не требует перезапуска
-контейнера. Конфигурация сайта находится в `/opt/shadow-company/nginx.conf`.
+`/mnt/data/shadow-company/public`. С 18 октября её раздаёт Rust/Axum-сервис `opensc_web`,
+подключающий папку в `/srv/shadow` только для чтения. Изменение статических файлов
+на хосте не требует перезапуска контейнера. Конфигурация сервиса находится в
+`/opt/shadow-company/web.yml`, маршрут — в `/opt/traefik/data/dynamic/shadow-company.yml`.
+Старый Nginx `shadow_company_files` сохранён для отката; его Compose-файл и конфигурация
+не изменены. Подробности защиты, лимитов и сборки — в [server/README.md](../server/README.md).
 Резервная копия перед первой публикацией хранится вне публичной папки, в каталоге
 `/mnt/data/shadow-company/deployments/opensc-0.1.0-4xgScYP9/backup-before.tar.gz`.
 Обновление 0.2.0 опубликовано 17 октября 2026 года; копия состояния 0.1.0 перед
 обновлением: `/mnt/data/shadow-company/deployments/opensc-0.2.0-rkmYHv2h/backup-before.tar.gz`.
+Перед переходом на Rust сохранены страница и маршрут в
+`/mnt/data/shadow-company/deployments/opensc-web-sK38zzqU/backup`.
+
+Образ Rust-сервера: `opensc-web:31a108ca74451ca5`, исходный коммит
+`26046f6f99a3cfa070746c2579b995db1436117b`,
+версия `0.1.1`, [успешная CI-сборка](https://github.com/STG-44/opensc/actions/runs/39115779194).
+
+Перед обновлением сервера до 0.1.1 сохранена его конфигурация в
+`/mnt/data/shadow-company/deployments/opensc-web-56v2Cu69/backup`.
+Исправлено применение лимитов к адресам с повторяющимися слешами.
 
 ## Файлы раздачи
 
@@ -36,6 +49,7 @@ downloads/
 assets/
   operation-map.jpg
   launcher-preview.png
+robots.txt
 updates/
   index.html
   manifest-v1.json
