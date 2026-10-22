@@ -106,7 +106,19 @@ impl Installed {
 
     pub fn launch(&self, root: &Path, data_path: &Path) -> Result<Child> {
         ensure!(data_path.is_dir(), "Укажи папку ресурсов оригинальной игры");
-        let directory = self.directory(root)?;
+        let root = root.canonicalize()?;
+        let directory = self.directory(&root)?;
+        let config = crate::config::Config::load(&root)?;
+        let overrides = if config.overrides_path.trim().is_empty() {
+            let path = root.join("overrides");
+            fs::create_dir_all(&path)?;
+            path
+        } else {
+            PathBuf::from(&config.overrides_path)
+        };
+        ensure!(overrides.is_dir(), "Папка улучшенных ресурсов не найдена");
+        let game_settings = root.join("game/settings.json");
+        fs::create_dir_all(game_settings.parent().context("Нет папки настроек игры")?)?;
         let entrypoint = self
             .release
             .entrypoints
@@ -125,8 +137,12 @@ impl Installed {
             .open(root.join("engine.log"))?;
         // A fixed argument contract; no shell and no remote commands from a manifest.
         Command::new(executable)
-            .arg("--data")
+            .arg("--game-dir")
             .arg(data_path.canonicalize()?)
+            .arg("--settings")
+            .arg(game_settings)
+            .arg("--overrides")
+            .arg(overrides.canonicalize()?)
             .current_dir(directory)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)

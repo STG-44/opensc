@@ -23,7 +23,7 @@ fn run() -> Result<()> {
     match command.as_deref() {
         Some("--help" | "-h") => {
             println!(
-                "OpenSC Launcher {}\n\nБез аргументов: открыть лаунчер\n--check [URL]       Проверить опубликованные сборки\n--install [URL]     Установить сборку для текущей системы\n--verify            Проверить установленную сборку\n--inspect <папка>    Инвентаризация ресурсов в JSON\n--data <папка>       Открыть лаунчер с выбранной папкой ресурсов\n\nOPENSC_HOME задаёт отдельную папку настроек и установок.",
+                "OpenSC Launcher {}\n\nБез аргументов: открыть лаунчер\n--check [URL]       Проверить опубликованные сборки\n--install [URL]     Установить сборку для текущей системы\n--verify            Проверить установленную сборку\n--launch [папка]     Запустить установленную игру без окна лаунчера\n--inspect <папка>    Инвентаризация ресурсов в JSON\n--data <папка>       Открыть лаунчер с выбранной папкой ресурсов\n\nOPENSC_HOME задаёт отдельную папку настроек и установок.",
                 env!("CARGO_PKG_VERSION")
             );
         }
@@ -62,6 +62,22 @@ fn run() -> Result<()> {
             let installed = updater::Installed::load(&root)?.context("Движок ещё не установлен")?;
             installed.verify(&root)?;
             println!("Все файлы прошли проверку SHA-256");
+        }
+        Some("--launch") => {
+            let config = Config::load(&root)?;
+            let data = args.next().unwrap_or(config.data_path);
+            anyhow::ensure!(
+                !data.trim().is_empty(),
+                "Укажи --launch PATH или папку в настройках"
+            );
+            let installed = updater::Installed::load(&root)?.context("Движок ещё не установлен")?;
+            let status = installed
+                .launch(&root, &resources::resolve_data(&PathBuf::from(data)))?
+                .wait()?;
+            anyhow::ensure!(
+                status.success(),
+                "Игра завершилась с ошибкой: {status}; см. engine.log"
+            );
         }
         Some("--data") | None => {
             let data = if command.is_some() {
