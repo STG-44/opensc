@@ -38,6 +38,9 @@ impl Server {
         let worker = thread::spawn(move || {
             while !worker_done.load(Ordering::Relaxed) {
                 if let Ok((mut stream, _)) = listener.accept() {
+                    // BSD/macOS and Windows may inherit the listener's
+                    // nonblocking mode; Linux accept() does not.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
