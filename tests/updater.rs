@@ -41,8 +41,17 @@ impl Server {
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
-                    let mut request = [0u8; 4096];
-                    let _ = stream.read(&mut request);
+                    // TCP can split headers across reads. Closing the socket
+                    // with unread request bytes can reset it on Windows.
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    while request.len() <= 65536 && !request.ends_with(b"\r\n\r\n") {
+                        let count = stream.read(&mut chunk).unwrap_or(0);
+                        if count == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&chunk[..count]);
+                    }
                     let header = format!(
                         "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
@@ -67,6 +76,32 @@ impl Drop for Server {
         self.done.store(true, Ordering::Relaxed);
         self.worker.take().unwrap().join().unwrap();
     }
+}
+
+#[test]
+fn fixture_waits_for_complete_http_headers() {
+    let server = Server::new(b"complete response".to_vec(), 200);
+    let address = format!("127.0.0.1:{}", server.url.port().unwrap());
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+        .unwrap();
+    let mut byte = [0];
+    let error = stream.read(&mut byte).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    stream.write_all(b"\r\n").unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.ends_with("complete response"));
 }
 
 fn release(bytes: &[u8]) -> Release {
