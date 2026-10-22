@@ -11,6 +11,8 @@ use std::{
 pub struct Config {
     pub manifest_url: String,
     pub data_path: String,
+    pub overrides_path: String,
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -18,6 +20,8 @@ impl Default for Config {
         Self {
             manifest_url: crate::DEFAULT_MANIFEST.into(),
             data_path: String::new(),
+            overrides_path: String::new(),
+            auto_update: true,
         }
     }
 }

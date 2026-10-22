@@ -217,7 +217,15 @@ impl Launcher {
                     } else {
                         "Для этой системы сборка ещё не опубликована".into()
                     };
+                    let needs_update = updater::supported(&available)
+                        && self.installed.as_ref().is_none_or(|installed| {
+                            installed.release.fingerprint().ok()
+                                != available.release.fingerprint().ok()
+                        });
                     self.available = Some(available);
+                    if needs_update && self.config.auto_update && self.child.is_none() {
+                        self.install(ctx);
+                    }
                 }
                 Event::Checked(Ok(None)) => {
                     self.status = "Сервер доступен. Движок ещё не опубликован".into()
@@ -328,7 +336,7 @@ impl Launcher {
                     );
                 }
                 ui.label(
-                    RichText::new("Совместимость ресурсов проверим после подключения движка.")
+                    RichText::new("Меню и обучение загружаются из выбранной установки оригинала.")
                         .small()
                         .color(MUTED),
                 );
@@ -523,7 +531,7 @@ impl eframe::App for Launcher {
                         if self.installed.is_none() {
                             ui.label(
                                 RichText::new(
-                                    "Сейчас можно подготовить ресурсы. Движок будет доступен позже.",
+                                    "Установи доступную сборку и выбери папку оригинальной игры.",
                                 )
                                 .color(MUTED),
                             );
@@ -652,6 +660,18 @@ impl eframe::App for Launcher {
                             .color(MUTED),
                     );
                     ui.add_space(8.0);
+                    ui.add_enabled_ui(!self.busy(), |ui| {
+                        ui.checkbox(
+                            &mut self.config.auto_update,
+                            "Обновлять игру при запуске лаунчера",
+                        );
+                    });
+                    ui.label("Улучшенные ресурсы (пусто — папка overrides в OpenSC)");
+                    ui.add_enabled(
+                        !self.busy() && self.child.is_none(),
+                        egui::TextEdit::singleline(&mut self.config.overrides_path)
+                            .desired_width(f32::INFINITY),
+                    );
                     ui.label("Папка установок и журналов");
                     ui.label(
                         RichText::new(self.root.display().to_string())

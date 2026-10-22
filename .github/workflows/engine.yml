@@ -1,0 +1,79 @@
+name: Build Bevy engine
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["engine/**", ".github/workflows/engine.yml"]
+  push:
+    tags: ["engine-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            executable: shadow-game
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            executable: shadow-game
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            executable: shadow-game.exe
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            executable: shadow-game
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+            executable: shadow-game
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: engine
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      RUSTFLAGS: ${{ matrix.platform == 'windows-x86_64' && '-C target-feature=+crt-static' || '' }}
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libxcursor-dev libxi-dev libxrandr-dev
+      - name: Pinned Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --all --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --release --locked -p shadow-model-viewer --bin shadow-game --target ${{ matrix.target }}
+      - name: Package engine without original assets
+        env:
+          ENGINE_TARGET: ${{ matrix.target }}
+          ENGINE_EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          cargo metadata --locked --format-version 1 --filter-platform "$ENGINE_TARGET" > metadata.json
+          python scripts/package-game.py --binary "target/$ENGINE_TARGET/release/$ENGINE_EXECUTABLE" --cargo-metadata metadata.json --target "$ENGINE_TARGET" --profile release --build-id "0.1.0-test.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:8}" --output dist/payload
+          python -c "import shutil; shutil.make_archive('dist/opensc-engine', 'zip', 'dist/payload')"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opensc-engine-${{ matrix.platform }}
+          path: engine/dist/opensc-engine.zip
+          if-no-files-found: error
