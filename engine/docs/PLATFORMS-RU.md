@@ -6,11 +6,11 @@
 
 | Платформа | Rust target | Среда проверки в GitHub Actions | Текущий статус |
 |---|---|---|---|
-| Linux x86-64 | `x86_64-unknown-linux-gnu` | Ubuntu 22.04 | Сборка и окно проверены на CachyOS; CI подготовлен |
-| Linux ARM64 | `aarch64-unknown-linux-gnu` | Ubuntu 22.04 ARM | CI подготовлен; сборка и окно ещё не проверены |
-| Windows x86-64 | `x86_64-pc-windows-msvc` | Windows Server 2022 | CI подготовлен; сборка и окно ещё не проверены |
-| macOS Intel | `x86_64-apple-darwin` | macOS 15 Intel | CI подготовлен; сборка и окно ещё не проверены |
-| macOS Apple Silicon | `aarch64-apple-darwin` | macOS 14 ARM | CI подготовлен; сборка и окно ещё не проверены |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | Ubuntu 22.04 | CI прошёл; установка и окно проверены на CachyOS |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | Ubuntu 22.04 ARM | CI: сборка, тесты и Clippy прошли; окно ещё не проверено |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | Windows Server 2022 | CI: сборка, тесты и Clippy прошли; окно ещё не проверено |
+| macOS Intel | `x86_64-apple-darwin` | macOS 15 Intel | CI: сборка, тесты и Clippy прошли; окно ещё не проверено |
+| macOS Apple Silicon | `aarch64-apple-darwin` | macOS 14 ARM | CI: сборка, тесты и Clippy прошли; окно ещё не проверено |
 
 Файл `../../.github/workflows/engine.yml` собирает приложения, запускает тесты форматов и Clippy на каждом target. Версии ОС сборочных машин закреплены; доступные метки сверены с [документацией GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Workflow начнёт выполняться после загрузки проекта в репозиторий GitHub с включёнными Actions. Исходники включены в `engine/` репозитория STG-44/opensc. Результаты новых сборок нужно проверять по соответствующему запуску Actions; подготовленная матрица не означает успешную сборку.
 
