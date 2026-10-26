@@ -59,6 +59,7 @@ def source_hashes():
     paths += list((PROJECT / "crates").rglob("*.rs"))
     paths += list((PROJECT / "crates").rglob("Cargo.toml"))
     paths += list((PROJECT / "crates").rglob("*.ttf"))
+    paths += list((PROJECT / "crates/shadow-model-viewer/assets/locales").glob("*.json"))
     return {p.relative_to(PROJECT).as_posix(): digest(p) for p in sorted(paths)}
 
 
@@ -87,6 +88,8 @@ def notices(metadata, destination):
             text.append(f"\n--- {path.name} ---\n{resolved.read_text(encoding='utf-8')}\n")
     font = PROJECT / "crates/shadow-viewer/assets/fonts/LICENSE-DejaVu.txt"
     text.append(f"\n{'=' * 72}\nEmbedded DejaVu Sans\n{font.read_text(encoding='utf-8')}")
+    font = PROJECT / "crates/shadow-viewer/assets/fonts/LICENSE-RussoOne.txt"
+    text.append(f"\n{'=' * 72}\nEmbedded Russo One\n{font.read_text(encoding='utf-8')}")
     destination.write_text("".join(text), encoding="utf-8")
 
 

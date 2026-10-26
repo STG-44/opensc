@@ -16,6 +16,11 @@ use bevy::{
 use shadow_formats::{AssetCatalog, MenuLayout};
 use std::{collections::HashSet, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
+#[path = "localization_smoke.rs"]
+mod locale_smoke;
+#[path = "menu_pages.rs"]
+mod pages;
+
 const MENU_PATH: &str = "config/window_bases/main_menu.txt";
 const RESOLUTIONS: &[[u32; 2]] = &[
     [1280, 720],
@@ -41,6 +46,10 @@ enum Screen {
     Training,
     Pause,
     Movie,
+    NewGame,
+    LoadGame,
+    Multiplayer,
+    Quit,
 }
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
@@ -59,6 +68,23 @@ enum Action {
     Pause,
     Notice,
     Intro,
+    NewGame,
+    LoadGame,
+    Multiplayer,
+    ConfirmExit,
+    DisplayTab,
+    AudioTab,
+    MouseTab,
+    KeyboardTab,
+    MasterVolume,
+    CameraSpeed,
+    EdgeScroll,
+    BriefingTab,
+    TeamTab,
+    EquipmentTab,
+    PreviousMission,
+    NextMission,
+    RefreshSaves,
 }
 #[derive(Message)]
 struct ActionRequest(Action);
@@ -76,9 +102,9 @@ struct Context {
 #[derive(Resource)]
 struct MenuAssets {
     backgrounds: Vec<Handle<Image>>,
-    bullet: Handle<Image>,
     bullet_size: UVec2,
     font: Handle<Font>,
+    title_font: Handle<Font>,
 }
 #[derive(Resource, Default)]
 struct Focus(Option<Action>, bool); // true: выбор мышью, гаснет после ухода указателя.
@@ -92,6 +118,14 @@ struct Canvas;
 struct Background(bool); // нижнее изображение и верхний слой перехода.
 #[derive(Component)]
 struct TitleGhost;
+#[derive(Component)]
+struct TitleBlur(Vec2, f32);
+#[derive(Component)]
+struct TitleOutline(Vec2);
+#[derive(Component)]
+struct ButtonCaption;
+#[derive(Component)]
+struct BrassRing(Color);
 #[derive(Component)]
 struct TitleBullet;
 #[derive(Resource, Default)]
@@ -150,6 +184,9 @@ struct Config {
     movie_smoke: Option<PathBuf>,
     evacuation_smoke: Option<PathBuf>,
     preview: AnimationPreview,
+    options_tab: usize,
+    campaign_tab: usize,
+    locale_smoke: Option<PathBuf>,
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
@@ -194,7 +231,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         return Err("атлас значков меню должен содержать четыре клетки".into());
     }
     if let Some(path) = &config.report {
-        let report = serde_json::json!({"menu":MENU_PATH,"source":catalog.source_label(MENU_PATH)?,"base_size":layout.size,"text_offset":layout.text_offset,"shadow_offset":layout.shadow_offset,"animation":{"background_step_seconds":menu_motion::BACKGROUND_STEP,"order":"frame1 → frame5 → frame1","hover_enter_seconds":menu_motion::HOVER_ENTER,"hover_leave_seconds":menu_motion::HOVER_LEAVE,"bullet":{"path":menu_motion::BULLET_PATH,"source":catalog.source_label(menu_motion::BULLET_PATH)?,"size":bullet_size.to_array()}},"buttons":layout.buttons.iter().map(|b|serde_json::json!({"id":b.id,"position":b.position,"enabled":main_action(&b.id).is_some()})).collect::<Vec<_>>(),"backgrounds":layout.backgrounds.iter().zip(&backgrounds).map(|(p,t)|serde_json::json!({"path":p,"source":catalog.source_label(p).unwrap_or_default(),"size":[t.image.texture_descriptor.size.width,t.image.texture_descriptor.size.height]})).collect::<Vec<_>>(),"font":"DejaVu Sans (Unicode)","preferences":saved.json()});
+        let report = serde_json::json!({"menu":MENU_PATH,"source":catalog.source_label(MENU_PATH)?,"base_size":layout.size,"text_offset":layout.text_offset,"shadow_offset":layout.shadow_offset,"animation":{"background_step_seconds":menu_motion::BACKGROUND_STEP,"order":"frame1 → frame5 → frame1","hover_enter_seconds":menu_motion::HOVER_ENTER,"hover_leave_seconds":menu_motion::HOVER_LEAVE,"bullet":{"path":menu_motion::BULLET_PATH,"source":catalog.source_label(menu_motion::BULLET_PATH)?,"size":bullet_size.to_array()}},"buttons":layout.buttons.iter().map(|b|serde_json::json!({"id":b.id,"position":b.position,"enabled":main_action(&b.id).is_some()})).collect::<Vec<_>>(),"backgrounds":layout.backgrounds.iter().zip(&backgrounds).map(|(p,t)|serde_json::json!({"path":p,"source":catalog.source_label(p).unwrap_or_default(),"size":[t.image.texture_descriptor.size.width,t.image.texture_descriptor.size.height]})).collect::<Vec<_>>(),"fonts":{"body":"DejaVu Sans (Unicode)","titles":"Russo One (Unicode, OFL)","outline":"native UI geometry"},"preferences":saved.json()});
         std::fs::write(path, serde_json::to_string_pretty(&report)? + "\n")?;
         return Ok(());
     }
@@ -225,12 +262,24 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         layout,
         settings_path: config.settings,
         saved: saved.clone(),
-        draft: saved,
+        draft: saved.clone(),
         notice,
         frame: first_frame,
         options_return: Screen::Main,
     })
     .init_resource::<Focus>()
+    .insert_resource(pages::Navigation {
+        options: config.options_tab,
+        campaign: config.campaign_tab,
+        ..default()
+    })
+    .insert_resource(saved.clone())
+    .insert_resource(crate::localization::Language::from_english(saved.english))
+    .add_plugins(crate::localization::LocalizationPlugin)
+    .insert_resource(training::CameraOptions {
+        speed: saved.camera_speed,
+        edge_scroll: saved.edge_scroll,
+    })
     .insert_resource(config.preview)
     .insert_resource(Capture {
         target: config.screen,
@@ -241,7 +290,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         ignore_input: config.screenshot.is_some()
             || config.smoke.is_some()
             || config.movie_smoke.is_some()
-            || config.evacuation_smoke.is_some(),
+            || config.evacuation_smoke.is_some()
+            || config.locale_smoke.is_some(),
     })
     .add_message::<ActionRequest>();
     movie::install(&mut app);
@@ -259,16 +309,21 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         include_bytes!("../../shadow-viewer/assets/fonts/DejaVuSans.ttf").to_vec(),
     );
     let font = app.world_mut().resource_mut::<Assets<Font>>().add(font);
+    let title_font = app
+        .world_mut()
+        .resource_mut::<Assets<Font>>()
+        .add(Font::from_bytes(
+            include_bytes!("../../shadow-viewer/assets/fonts/RussoOne-Regular.ttf").to_vec(),
+        ));
     let backgrounds = backgrounds
         .into_iter()
         .map(|t| app.world_mut().resource_mut::<Assets<Image>>().add(t.image))
         .collect();
-    let bullet = app.world_mut().resource_mut::<Assets<Image>>().add(bullet);
     app.insert_resource(MenuAssets {
         font,
         backgrounds,
-        bullet,
         bullet_size,
+        title_font,
     });
     // Начальный OnEnter исполняется до PreStartup. Камера нужна уже здесь.
     install_menu_camera(&mut app);
@@ -283,6 +338,10 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             movie_click,
             mouse_actions,
             handle_actions,
+            sync_language,
+            pages::refresh,
+            pages::apply_audio,
+            pages::scroll_text,
             poll_loading,
             movie::update.run_if(in_state(Screen::Movie)),
             movie_finished,
@@ -409,6 +468,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             )
             .add_systems(Update, evacuation_smoke_result.after(training_finished));
     }
+    if let Some(path) = config.locale_smoke {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        app.insert_resource(locale_smoke::Smoke::new(path))
+            .add_systems(Last, locale_smoke::run);
+    }
     if let Some(path) = config.smoke {
         app.insert_resource(Smoke::new(path))
             .add_systems(Update, smoke.after(capture));
@@ -434,6 +500,19 @@ fn add_screens(app: &mut App) {
         OnEnter(Screen::Options),
         (reset_input, crate::selection::cancel, spawn_options).chain(),
     )
+    .add_systems(
+        OnEnter(Screen::NewGame),
+        (reset_input, pages::enter).chain(),
+    )
+    .add_systems(
+        OnEnter(Screen::LoadGame),
+        (reset_input, pages::enter).chain(),
+    )
+    .add_systems(
+        OnEnter(Screen::Multiplayer),
+        (reset_input, pages::enter).chain(),
+    )
+    .add_systems(OnEnter(Screen::Quit), (reset_input, pages::enter).chain())
     .add_systems(
         OnEnter(Screen::Loading),
         (reset_input, spawn_loading, start_loading).chain(),
@@ -576,7 +655,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if args.iter().any(|a| a == "--help") {
         println!("--data PATH — совместимость с OpenSC Launcher 0.2.0.");
         println!(
-            "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language ru|en] [--window WIDTHxHEIGHT] [--screen main|options|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
+            "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language ru|en] [--window WIDTHxHEIGHT] [--screen main|options|new-game|load-game|multiplayer|quit|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json] [--locale-smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
         );
         return Ok(None);
     }
@@ -598,6 +677,9 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         movie_smoke: None,
         evacuation_smoke: None,
         preview: AnimationPreview::default(),
+        options_tab: 0,
+        campaign_tab: 0,
+        locale_smoke: None,
     };
     let mut seen = HashSet::new();
     for pair in args.chunks(2) {
@@ -620,6 +702,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--screenshot" => config.screenshot = Some(value.into()),
             "--menu-json" => config.report = Some(value.into()),
             "--smoke-json" => config.smoke = Some(value.into()),
+            "--locale-smoke-json" => config.locale_smoke = Some(value.into()),
             "--movie" => config.movie = Some(shadow_formats::normalize_path(value)?),
             "--movie-json" => config.movie_report = Some(value.into()),
             "--evacuation-smoke-json" => config.evacuation_smoke = Some(value.into()),
@@ -664,7 +747,28 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                     "training" => Screen::Training,
                     "pause" => Screen::Pause,
                     "movie" => Screen::Movie,
+                    "new-game" => Screen::NewGame,
+                    "load-game" => Screen::LoadGame,
+                    "multiplayer" => Screen::Multiplayer,
+                    "quit" => Screen::Quit,
                     _ => return Err("неверный --screen".into()),
+                }
+            }
+            "--options-tab" => {
+                config.options_tab = match value.as_str() {
+                    "preferences" => 0,
+                    "audio-video" => 1,
+                    "mouse" => 2,
+                    "keyboard" => 3,
+                    _ => return Err("--options-tab: preferences|audio-video|mouse|keyboard".into()),
+                }
+            }
+            "--campaign-tab" => {
+                config.campaign_tab = match value.as_str() {
+                    "planning" => 0,
+                    "personnel" => 1,
+                    "equipment" => 2,
+                    _ => return Err("--campaign-tab: planning|personnel|equipment".into()),
                 }
             }
             "--frame" => {
@@ -718,9 +822,21 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         + usize::from(config.movie_report.is_some())
         + usize::from(config.movie_smoke.is_some())
         + usize::from(config.evacuation_smoke.is_some())
+        + usize::from(config.locale_smoke.is_some())
         > 1
     {
         return Err("выбери один выходной файл".into());
+    }
+    if config.locale_smoke.is_some() && config.screen != Screen::Main {
+        return Err("--locale-smoke-json starts at --screen main".into());
+    }
+    if config.locale_smoke.is_some() {
+        if !seen.contains("--settings") {
+            return Err(
+                "--locale-smoke-json requires --settings with an isolated test file".into(),
+            );
+        }
+        config.english = Some(true);
     }
     Ok(Some(config))
 }
@@ -751,6 +867,9 @@ fn training_accepts_input(
 }
 fn main_action(id: &str) -> Option<Action> {
     match id {
+        "b_new_game" => Some(Action::NewGame),
+        "b_load_game" => Some(Action::LoadGame),
+        "b_multiplayer" => Some(Action::Multiplayer),
         "b_training" => Some(Action::Training),
         "b_options" => Some(Action::Options),
         "b_exit" => Some(Action::Exit),
@@ -764,7 +883,7 @@ fn main_label(id: &str) -> (&str, &str) {
         "b_load_game" => ("ЗАГРУЗИТЬ ИГРУ", "LOAD GAME"),
         "b_training" => ("ОБУЧЕНИЕ", "TRAINING"),
         "b_options" => ("НАСТРОЙКИ", "OPTIONS"),
-        "b_intro" => ("ВСТУПЛЕНИЕ", "INTRO"),
+        "b_intro" => ("ВСТУПЛЕНИЕ", "VIEW INTRO"),
         "b_multiplayer" => ("СЕТЕВАЯ ИГРА", "MULTIPLAYER"),
         "b_exit" => ("ВЫХОД", "EXIT"),
         _ => ("НЕИЗВЕСТНЫЙ РАЗДЕЛ", "UNKNOWN SECTION"),
@@ -859,6 +978,7 @@ fn button(
     en: &str,
     action: Option<Action>,
     order: usize,
+    title: bool,
 ) -> Entity {
     let id = commands
         .spawn((
@@ -884,10 +1004,16 @@ fn button(
         size - offset - Vec2::new(8.0, 0.0),
         ru,
         en,
-        18.0,
+        if title { 19.0 } else { 14.0 },
         action,
     );
+    commands.entity(caption).insert(TextFont {
+        font: assets.title_font.clone().into(),
+        font_size: FontSize::Px(if title { 19.0 } else { 14.0 }),
+        ..default()
+    });
     commands.entity(caption).insert((
+        ButtonCaption,
         ZIndex(1),
         Pickable::IGNORE,
         TextShadow {
@@ -906,7 +1032,7 @@ fn spawn_main(
 ) {
     commands.remove_resource::<Loading>();
     context.draft = context.saved.clone();
-    focus.0 = Some(Action::Training);
+    focus.0 = None;
     focus.1 = false;
     let root = root(
         &mut commands,
@@ -929,45 +1055,114 @@ fn spawn_main(
             en,
             main_action(&b.id),
             order,
+            true,
         );
         commands.entity(entity).insert(Anchor::Right);
         commands
             .entity(entity)
             .insert(menu_motion::Hover::default());
-        let ghost = text(
-            &mut commands,
-            entity,
-            &assets,
-            Vec2::from_array(context.layout.shadow_offset),
-            Vec2::new(context.layout.size[0] - b.position[0] - 10.0, 40.0)
-                - Vec2::from_array(context.layout.text_offset)
-                - Vec2::new(8.0, 0.0),
-            ru,
-            en,
-            18.0,
-            main_action(&b.id),
-        );
-        commands
-            .entity(ghost)
-            .insert((TitleGhost, Pickable::IGNORE));
-        commands.spawn((
-            TitleBullet,
-            ImageNode {
-                rect: Some(menu_motion::bullet_rect(assets.bullet_size, false)),
-                ..ImageNode::new(assets.bullet.clone())
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                ..default()
-            },
-            Placement {
-                position: Vec2::ZERO,
-                size: Vec2::splat(63.0),
-            },
-            Anchor::Left,
-            Pickable::IGNORE,
-            ChildOf(entity),
-        ));
+        // Новые надписи строятся из TTF, а не из низкого растрового атласа.
+        // Восемь смещённых контуров дают исходную красную обводку при любом DPI.
+        for direction in [
+            (-1., -1.),
+            (0., -1.),
+            (1., -1.),
+            (-1., 0.),
+            (1., 0.),
+            (-1., 1.),
+            (0., 1.),
+            (1., 1.),
+        ] {
+            let outline = text(
+                &mut commands,
+                entity,
+                &assets,
+                Vec2::from_array(context.layout.text_offset),
+                Vec2::new(context.layout.size[0] - b.position[0] - 10.0, 40.0)
+                    - Vec2::from_array(context.layout.text_offset)
+                    - Vec2::new(8.0, 0.0),
+                ru,
+                en,
+                19.0,
+                main_action(&b.id),
+            );
+            commands.entity(outline).insert((
+                TitleOutline(Vec2::new(direction.0, direction.1) * 1.2),
+                ButtonCaption,
+                TextFont {
+                    font: assets.title_font.clone().into(),
+                    font_size: FontSize::Px(19.0),
+                    ..default()
+                },
+                ZIndex(0),
+                Pickable::IGNORE,
+            ));
+        }
+        // Мягкий ореол исходных кнопок пересобирается из Unicode-текста.
+        // Слои не требуют размытого низкого атласа и сближаются при наведении.
+        for (x, y, alpha) in [
+            (0., 0., 0.09),
+            (-1.4, 0., 0.07),
+            (1.4, 0., 0.07),
+            (0., -1.4, 0.07),
+            (0., 1.4, 0.07),
+            (-1.4, -1.4, 0.04),
+            (-1.4, 1.4, 0.04),
+            (1.4, -1.4, 0.04),
+            (1.4, 1.4, 0.04),
+        ] {
+            let ghost = text(
+                &mut commands,
+                entity,
+                &assets,
+                Vec2::from_array(context.layout.shadow_offset),
+                Vec2::new(context.layout.size[0] - b.position[0] - 10., 40.)
+                    - Vec2::from_array(context.layout.text_offset)
+                    - Vec2::new(8., 0.),
+                ru,
+                en,
+                19.,
+                main_action(&b.id),
+            );
+            commands.entity(ghost).insert((
+                TitleGhost,
+                TitleBlur(Vec2::new(x, y), alpha),
+                ButtonCaption,
+                Pickable::IGNORE,
+                ZIndex(-1),
+                TextFont {
+                    font: assets.title_font.clone().into(),
+                    font_size: FontSize::Px(19.),
+                    ..default()
+                },
+            ));
+        }
+        // Латунное донце патрона: новые круги UI без масштабирования BMP.
+        for (size, color) in [
+            (23., Color::srgb(0.09, 0.08, 0.03)),
+            (20., Color::srgb(0.55, 0.44, 0.19)),
+            (17., Color::srgb(0.15, 0.16, 0.13)),
+            (14., Color::srgb(0.72, 0.61, 0.32)),
+            (11., Color::srgb(0.29, 0.27, 0.16)),
+            (6., Color::srgb(0.87, 0.79, 0.49)),
+        ] {
+            commands.spawn((
+                BrassRing(color),
+                BackgroundColor(color),
+                Node {
+                    position_type: PositionType::Absolute,
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                Placement {
+                    position: Vec2::new(13.0, 17.0) - Vec2::splat(size * 0.5),
+                    size: Vec2::splat(size),
+                },
+                Anchor::Left,
+                Pickable::IGNORE,
+                ChildOf(entity),
+            ));
+        }
     }
     let w = context.layout.size[0];
     let footer = text(
@@ -976,8 +1171,8 @@ fn spawn_main(
         &assets,
         Vec2::new(22.0, 407.0),
         Vec2::new(w - 44.0, 45.0),
-        "Доступны обучение, настройки и вступление. Остальные разделы в разработке.",
-        "Training, options and intro are available. Other sections are in development.",
+        "OpenSC · ТЕСТОВАЯ ВЕРСИЯ",
+        "OpenSC · TEST BUILD",
         11.0,
         None,
     );
@@ -1001,9 +1196,8 @@ fn spawn_options(
     assets: Res<MenuAssets>,
     camera: Single<Entity, With<MenuCamera>>,
     mut focus: ResMut<Focus>,
+    mut navigation: ResMut<pages::Navigation>,
 ) {
-    focus.0 = Some(Action::Language);
-    focus.1 = false;
     let root = root(
         &mut commands,
         Screen::Options,
@@ -1012,68 +1206,16 @@ fn spawn_options(
         context.frame,
         true,
     );
-    let w = context.layout.size[0];
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
-        ChildOf(root),
-    ));
-    let left = (w - 440.0) * 0.5;
-    let title = text(
+    navigation.dirty = false;
+    pages::draw(
         &mut commands,
         root,
+        Screen::Options,
+        &context,
         &assets,
-        Vec2::new(left, 48.0),
-        Vec2::new(440.0, 40.0),
-        "НАСТРОЙКИ",
-        "OPTIONS",
-        23.0,
-        None,
+        &navigation,
+        &mut focus,
     );
-    commands.entity(title).insert(Anchor::Center);
-    for (order, action) in [
-        Action::Language,
-        Action::Window,
-        Action::Resolution,
-        Action::TextSize,
-        Action::Background,
-        Action::Apply,
-        Action::Back,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let entity = button(
-            &mut commands,
-            root,
-            &assets,
-            Vec2::new(left, 105.0 + order as f32 * 40.0),
-            Vec2::new(440.0, 38.0),
-            Vec2::new(12.0, 5.0),
-            "",
-            "",
-            Some(action),
-            order,
-        );
-        commands.entity(entity).insert(Anchor::Center);
-    }
-    let notice = text(
-        &mut commands,
-        root,
-        &assets,
-        Vec2::new(left, 405.0),
-        Vec2::new(440.0, 60.0),
-        &context.notice,
-        &context.notice,
-        11.0,
-        Some(Action::Notice),
-    );
-    commands.entity(notice).insert(Anchor::Center);
 }
 fn spawn_loading(
     mut commands: Commands,
@@ -1091,18 +1233,15 @@ fn spawn_loading(
         context.frame,
         true,
     );
-    let label = text(
+    pages::draw(
         &mut commands,
         root,
+        Screen::Loading,
+        &context,
         &assets,
-        Vec2::new(35.0, 360.0),
-        Vec2::new(context.layout.size[0] - 70.0, 80.0),
-        "ЗАГРУЗКА ОБУЧЕНИЯ…\nEsc — отменить",
-        "LOADING TRAINING…\nEsc — cancel",
-        19.0,
-        None,
+        &pages::Navigation::default(),
+        &mut focus,
     );
-    commands.entity(label).insert(Anchor::Stretch);
 }
 fn spawn_pause(
     mut commands: Commands,
@@ -1121,53 +1260,15 @@ fn spawn_pause(
         context.frame,
         false,
     );
-    let w = context.layout.size[0];
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
-        ChildOf(root),
-    ));
-    let left = (w - 400.0) * 0.5;
-    let title = text(
+    pages::draw(
         &mut commands,
         root,
+        Screen::Pause,
+        &context,
         &assets,
-        Vec2::new(left, 75.0),
-        Vec2::new(400.0, 40.0),
-        "ПАУЗА",
-        "PAUSED",
-        24.0,
-        None,
+        &pages::Navigation::default(),
+        &mut focus,
     );
-    commands.entity(title).insert(Anchor::Center);
-    for (order, (action, ru, en)) in [
-        (Action::Resume, "ПРОДОЛЖИТЬ", "RESUME"),
-        (Action::Options, "НАСТРОЙКИ", "OPTIONS"),
-        (Action::Main, "ГЛАВНОЕ МЕНЮ", "MAIN MENU"),
-        (Action::Exit, "ВЫЙТИ ИЗ ИГРЫ", "QUIT GAME"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let entity = button(
-            &mut commands,
-            root,
-            &assets,
-            Vec2::new(left, 145.0 + order as f32 * 52.0),
-            Vec2::new(400.0, 40.0),
-            Vec2::new(12.0, 6.0),
-            ru,
-            en,
-            Some(action),
-            order,
-        );
-        commands.entity(entity).insert(Anchor::Center);
-    }
 }
 fn start_loading(mut commands: Commands, context: Res<Context>) {
     let catalog = context.catalog.clone();
@@ -1246,7 +1347,7 @@ fn keyboard(
     }
     let ctrl = input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight);
     if ctrl && input.just_pressed(KeyCode::KeyX) {
-        requests.write(ActionRequest(Action::Exit));
+        requests.write(ActionRequest(Action::ConfirmExit));
         return;
     }
     if input.just_pressed(KeyCode::Escape) {
@@ -1320,6 +1421,7 @@ fn mouse_actions(
         }
     }
 }
+#[allow(clippy::too_many_arguments)] // Ресурсы и запросы состояния одного ECS-обработчика.
 fn handle_actions(
     mut requests: MessageReader<ActionRequest>,
     mut context: ResMut<Context>,
@@ -1328,9 +1430,60 @@ fn handle_actions(
     mut window: Single<&mut Window>,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
+    mut navigation: ResMut<pages::Navigation>,
 ) {
     for ActionRequest(action) in requests.read() {
         match action {
+            Action::NewGame if *state.get() == Screen::Main => {
+                context.notice.clear();
+                next.set(Screen::NewGame);
+            }
+            Action::LoadGame if *state.get() == Screen::Main => {
+                context.notice.clear();
+                next.set(Screen::LoadGame);
+            }
+            Action::Multiplayer if *state.get() == Screen::Main => {
+                context.notice.clear();
+                next.set(Screen::Multiplayer);
+            }
+            Action::DisplayTab | Action::AudioTab | Action::MouseTab | Action::KeyboardTab
+                if *state.get() == Screen::Options =>
+            {
+                navigation.options = match action {
+                    Action::AudioTab => 1,
+                    Action::MouseTab => 2,
+                    Action::KeyboardTab => 3,
+                    _ => 0,
+                };
+                navigation.dirty = true;
+            }
+            Action::BriefingTab | Action::TeamTab | Action::EquipmentTab
+                if *state.get() == Screen::NewGame =>
+            {
+                navigation.campaign = match action {
+                    Action::TeamTab => 1,
+                    Action::EquipmentTab => 2,
+                    _ => 0,
+                };
+                navigation.dirty = true;
+            }
+            Action::PreviousMission | Action::NextMission if *state.get() == Screen::NewGame => {
+                let count = pages::mission_count(&context.catalog);
+                navigation.mission = if *action == Action::NextMission {
+                    (navigation.mission + 1) % count
+                } else {
+                    (navigation.mission + count - 1) % count
+                };
+                navigation.dirty = true;
+            }
+            Action::RefreshSaves if *state.get() == Screen::LoadGame => {
+                context.notice = if context.saved.english {
+                    "List refreshed: no compatible saves."
+                } else {
+                    "Список обновлён: совместимых сохранений нет."
+                }
+                .into();
+            }
             Action::Intro if *state.get() == Screen::Main => {
                 context.notice.clear();
                 commands.insert_resource(movie::Request {
@@ -1340,7 +1493,7 @@ fn handle_actions(
                 });
                 next.set(Screen::Movie);
             }
-            Action::Training if *state.get() == Screen::Main => {
+            Action::Training if matches!(state.get(), Screen::Main | Screen::NewGame) => {
                 context.notice.clear();
                 next.set(Screen::Loading);
             }
@@ -1349,6 +1502,23 @@ fn handle_actions(
                 context.draft = context.saved.clone();
                 context.notice.clear();
                 next.set(Screen::Options);
+            }
+            Action::MasterVolume if *state.get() == Screen::Options => {
+                context.draft.master_volume = if context.draft.master_volume >= 1.0 {
+                    0.0
+                } else {
+                    (context.draft.master_volume + 0.1).min(1.0)
+                };
+            }
+            Action::CameraSpeed if *state.get() == Screen::Options => {
+                context.draft.camera_speed = if context.draft.camera_speed >= 2.0 {
+                    0.5
+                } else {
+                    (context.draft.camera_speed + 0.25).min(2.0)
+                };
+            }
+            Action::EdgeScroll if *state.get() == Screen::Options => {
+                context.draft.edge_scroll = !context.draft.edge_scroll
             }
             Action::Language if *state.get() == Screen::Options => {
                 context.draft.english = !context.draft.english
@@ -1377,6 +1547,11 @@ fn handle_actions(
                 match context.draft.save(&context.settings_path) {
                     Ok(()) => {
                         context.saved = context.draft.clone();
+                        commands.insert_resource(context.saved.clone());
+                        commands.insert_resource(training::CameraOptions {
+                            speed: context.saved.camera_speed,
+                            edge_scroll: context.saved.edge_scroll,
+                        });
                         window.resolution.set(
                             context.saved.window_size[0] as f32,
                             context.saved.window_size[1] as f32,
@@ -1399,6 +1574,8 @@ fn handle_actions(
                     commands.remove_resource::<Loading>();
                 }
                 Screen::Movie => next.set(Screen::Main),
+                Screen::NewGame | Screen::LoadGame | Screen::Multiplayer => next.set(Screen::Main),
+                Screen::Quit => next.set(navigation.quit_return.unwrap_or(Screen::Main)),
                 _ => {}
             },
             Action::Resume if *state.get() == Screen::Pause => next.set(Screen::Training),
@@ -1408,11 +1585,28 @@ fn handle_actions(
                 next.set(Screen::Main);
             }
             Action::Exit => {
+                navigation.quit_return = Some(*state.get());
+                context.notice.clear();
+                next.set(Screen::Quit);
+            }
+            Action::ConfirmExit => {
                 exit.write(AppExit::Success);
             }
             _ => {}
         }
     }
+}
+fn sync_language(
+    context: Res<Context>,
+    state: Res<State<Screen>>,
+    mut language: ResMut<crate::localization::Language>,
+) {
+    let english = if *state.get() == Screen::Options {
+        context.draft.english
+    } else {
+        context.saved.english
+    };
+    language.set_if_neq(crate::localization::Language::from_english(english));
 }
 fn apply_camera(
     state: Res<State<Screen>>,
@@ -1445,7 +1639,12 @@ fn fit_ui(
         (With<Background>, Without<Canvas>, Without<Placement>),
     >,
     images: Res<Assets<Image>>,
-    mut fonts: Query<(&Caption, &mut TextFont)>,
+    mut fonts: Query<(
+        &Caption,
+        &mut TextFont,
+        Option<&ButtonCaption>,
+        Option<&Placement>,
+    )>,
     mut previous: Local<Option<([f32; 2], f32, Screen, usize)>>,
 ) {
     let text_scale = if *state.get() == Screen::Options {
@@ -1472,7 +1671,8 @@ fn fit_ui(
             node.height = px(size.y);
         }
     }
-    if previous.as_ref() == Some(&metrics) {
+    let fresh = children.iter_mut().any(|(_, _, node)| node.is_added());
+    if previous.as_ref() == Some(&metrics) && !fresh {
         return;
     }
     *previous = Some(metrics);
@@ -1502,8 +1702,24 @@ fn fit_ui(
             });
         node.height = px(placement.size.y * fit.scale);
     }
-    for (caption, mut font) in &mut fonts {
-        font.font_size = FontSize::Px(caption.size * fit.scale * text_scale);
+    for (caption, mut font, button, placement) in &mut fonts {
+        let mut size = caption.size * text_scale;
+        if button.is_some()
+            && let Some(placement) = placement
+        {
+            // Основной и контурные слои получают одинаковую ограниченную кегль.
+            // Длинные русские подписи и масштаб 150% не выходят из кнопки.
+            let chars = caption
+                .ru
+                .chars()
+                .count()
+                .max(caption.en.chars().count())
+                .max(1);
+            if chars > 1 {
+                size = size.min(placement.size.x / (chars as f32 * 0.75));
+            }
+        }
+        font.font_size = FontSize::Px(size * fit.scale);
     }
 }
 fn update_captions(
@@ -1518,6 +1734,19 @@ fn update_captions(
     };
     for (caption, mut text) in &mut captions {
         let value = match caption.action {
+            Some(Action::Notice)
+                if matches!(
+                    context.notice.as_str(),
+                    "Настройки сохранены" | "Settings saved"
+                ) =>
+            {
+                if p.english {
+                    "Settings saved"
+                } else {
+                    "Настройки сохранены"
+                }
+                .into()
+            }
             Some(Action::Notice) => context.notice.clone(),
             Some(Action::Language) => {
                 if p.english {
@@ -1525,6 +1754,45 @@ fn update_captions(
                 } else {
                     "ЯЗЫК МЕНЮ: РУССКИЙ".into()
                 }
+            }
+            Some(Action::MasterVolume) => {
+                format!(
+                    "{}: {:.0}%",
+                    if p.english {
+                        "MASTER VOLUME"
+                    } else {
+                        "ОБЩАЯ ГРОМКОСТЬ"
+                    },
+                    p.master_volume * 100.
+                )
+            }
+            Some(Action::CameraSpeed) => {
+                format!(
+                    "{}: {:.0}%",
+                    if p.english {
+                        "CAMERA SPEED"
+                    } else {
+                        "СКОРОСТЬ КАМЕРЫ"
+                    },
+                    p.camera_speed * 100.
+                )
+            }
+            Some(Action::EdgeScroll) => {
+                format!(
+                    "{}: {}",
+                    if p.english {
+                        "SCREEN EDGE SCROLLING"
+                    } else {
+                        "ПРОКРУТКА У КРАЯ ЭКРАНА"
+                    },
+                    if p.edge_scroll {
+                        if p.english { "ON" } else { "ВКЛ" }
+                    } else if p.english {
+                        "OFF"
+                    } else {
+                        "ВЫКЛ"
+                    }
+                )
             }
             Some(Action::Window) => {
                 if p.english {
@@ -1586,13 +1854,6 @@ fn update_captions(
                     "ПРИМЕНИТЬ".into()
                 }
             }
-            Some(Action::Back) => {
-                if p.english {
-                    "BACK".into()
-                } else {
-                    "НАЗАД".into()
-                }
-            }
             _ => {
                 if p.english {
                     caption.en.clone()
@@ -1622,10 +1883,18 @@ fn style_buttons(
     )>,
     mut background: Query<&mut BackgroundColor>,
     mut captions: Query<
-        (&ChildOf, &mut TextColor, &mut Node, Option<&TitleGhost>),
+        (
+            &ChildOf,
+            &mut TextColor,
+            &mut Node,
+            Option<&TitleGhost>,
+            Option<&TitleOutline>,
+            Option<&TitleBlur>,
+        ),
         Without<TitleBullet>,
     >,
     mut bullets: Query<(&ChildOf, &mut ImageNode), With<TitleBullet>>,
+    rings: Query<(Entity, &ChildOf, &BrassRing)>,
 ) {
     let scale = window.height() / context.layout.size[1];
     let snapshot = preview.as_ref().and_then(|p| p.hover);
@@ -1660,45 +1929,50 @@ fn style_buttons(
             } else if pressed {
                 Color::srgba(0.55, 0.2, 0.04, 0.6)
             } else if selected {
-                Color::srgba(0.30, 0.11, 0.04, 0.48)
+                Color::srgba(0.30, 0.32, 0.15, 0.6)
             } else {
                 Color::NONE
             };
         }
-        for (parent, mut color, mut node, ghost) in &mut captions {
+        for (parent, mut color, mut node, ghost, outline, blur) in &mut captions {
             if parent.parent() == entity {
                 color.0 = if ghost.is_some() {
                     let position = hover.as_ref().unwrap().offset(
                         Vec2::from_array(context.layout.text_offset),
                         Vec2::from_array(context.layout.shadow_offset),
                     );
+                    let position = position + blur.map_or(Vec2::ZERO, |b| b.0) * (1.0 - progress);
                     node.left = px(position.x * scale);
                     node.top = px(position.y * scale);
                     Color::srgba(
-                        0.62,
-                        0.29,
-                        0.02,
-                        if choice.action.is_some() {
-                            0.16 + progress * 0.08
-                        } else {
-                            0.0
-                        },
+                        0.94,
+                        0.33,
+                        0.015,
+                        blur.map_or(0.3, |b| b.1) * (1.0 - progress),
                     )
+                } else if let Some(outline) = outline {
+                    let position = Vec2::from_array(context.layout.text_offset) + outline.0;
+                    node.left = px(position.x * scale);
+                    node.top = px(position.y * scale);
+                    Color::srgb(0.80 + progress * 0.2, 0.16, 0.01)
                 } else if choice.action.is_none() {
                     Color::srgb(0.43, 0.43, 0.41)
                 } else if title && pressed {
                     Color::srgb(0.65, 0.30, 0.04)
                 } else if title {
-                    Color::srgb(
-                        0.94 + 0.06 * progress,
-                        0.76 + 0.12 * progress,
-                        0.38 + 0.17 * progress,
-                    )
+                    Color::srgb(1.0, 0.85 + 0.12 * progress, 0.08 + 0.32 * progress)
                 } else if selected {
                     Color::srgb(1.0, 0.72, 0.40)
                 } else {
                     Color::srgb(0.90, 0.90, 0.83)
                 };
+            }
+        }
+        for (ring_entity, parent, ring) in &rings {
+            if parent.parent() == entity
+                && let Ok(mut color) = background.get_mut(ring_entity)
+            {
+                color.0 = ring.0.with_alpha(if pressed { 0.6 } else { 1.0 });
             }
         }
         for (parent, mut image) in &mut bullets {
@@ -2242,6 +2516,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<Image>>()
             .init_resource::<Focus>()
+                    .init_resource::<pages::Navigation>()
             .init_resource::<ButtonInput<MouseButton>>()
             .add_message::<ActionRequest>()
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(0.125)))
@@ -2260,9 +2535,9 @@ mod tests {
             .collect();
         app.insert_resource(MenuAssets {
             backgrounds,
-            bullet: Handle::default(),
             bullet_size: UVec2::splat(128),
             font: Handle::default(),
+            title_font: Handle::default(),
         });
         app.world_mut().spawn(Window {
             resolution: [1680, 720].into(),
@@ -2536,13 +2811,21 @@ mod tests {
                     80 + i * 40
                 ));
             }
-            for screen in [Screen::Main, Screen::Options] {
+            for screen in [
+                Screen::Main,
+                Screen::Options,
+                Screen::NewGame,
+                Screen::LoadGame,
+                Screen::Multiplayer,
+                Screen::Quit,
+            ] {
                 let mut app = App::new();
                 app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
                     .insert_state(screen)
                     .init_resource::<ButtonInput<KeyCode>>()
                     .init_resource::<ButtonInput<MouseButton>>()
                     .init_resource::<Focus>()
+                    .init_resource::<pages::Navigation>()
                     .init_resource::<Assets<Image>>()
                     .insert_resource(Context {
                         catalog: catalog.clone(),
@@ -2560,9 +2843,9 @@ mod tests {
                     .add(Image::default());
                 app.insert_resource(MenuAssets {
                     backgrounds: vec![image.clone()],
-                    bullet: image,
                     bullet_size: UVec2::splat(128),
                     font: Handle::default(),
+                    title_font: Handle::default(),
                 });
                 let window = app
                     .world_mut()
@@ -2584,14 +2867,27 @@ mod tests {
                 );
                 assert_eq!(
                     app.world_mut().query::<&Choice>().iter(app.world()).count(),
-                    7
+                    match screen {
+                        Screen::Options => 9,
+                        Screen::LoadGame | Screen::Quit => 2,
+                        Screen::Multiplayer => 1,
+                        _ => 7,
+                    }
                 );
                 let enabled = app
                     .world_mut()
                     .query_filtered::<Entity, With<UiButton>>()
                     .iter(app.world())
                     .count();
-                assert_eq!(enabled, if screen == Screen::Main { 4 } else { 7 });
+                assert_eq!(
+                    enabled,
+                    match screen {
+                        Screen::Options => 9,
+                        Screen::LoadGame | Screen::Quit => 2,
+                        Screen::Multiplayer => 1,
+                        _ => 7,
+                    }
+                );
                 for &[w, h] in RESOLUTIONS {
                     app.world_mut()
                         .get_mut::<Window>(window)
@@ -2609,7 +2905,7 @@ mod tests {
                             (px(0), px(0), px(w as f32), px(h as f32))
                         );
                     }
-                    for (choice, node) in app
+                    for (_choice, node) in app
                         .world_mut()
                         .query::<(&Choice, &Node)>()
                         .iter(app.world())
@@ -2628,12 +2924,6 @@ mod tests {
                         if screen == Screen::Main {
                             assert!(
                                 (w as f32 - left - size - 10.0 * h as f32 / 480.0).abs() < 0.01
-                            );
-                        } else {
-                            assert!(
-                                (left + size * 0.5 - w as f32 * 0.5).abs() < 0.01,
-                                "option {} is off center",
-                                choice.order
                             );
                         }
                     }
@@ -2671,6 +2961,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<Focus>()
+            .init_resource::<pages::Navigation>()
             .add_message::<ActionRequest>()
             .insert_resource(Capture {
                 target: Screen::Main,
@@ -2755,6 +3046,7 @@ mod tests {
             .init_state::<Screen>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Focus>()
+            .init_resource::<pages::Navigation>()
             .add_message::<ActionRequest>()
             .insert_resource(Capture {
                 target: Screen::Main,
@@ -2820,6 +3112,7 @@ mod tests {
                 frame: 0,
                 options_return: Screen::Main,
             })
+            .init_resource::<pages::Navigation>()
             .add_systems(Update, handle_actions);
         app.world_mut().spawn(Window::default());
         let action = |app: &mut App, action| {
@@ -2829,6 +3122,17 @@ mod tests {
             app.update();
             app.update();
         };
+        for (route, screen) in [
+            (Action::NewGame, Screen::NewGame),
+            (Action::LoadGame, Screen::LoadGame),
+            (Action::Multiplayer, Screen::Multiplayer),
+            (Action::Exit, Screen::Quit),
+        ] {
+            action(&mut app, route);
+            assert_eq!(*app.world().resource::<State<Screen>>().get(), screen);
+            action(&mut app, Action::Back);
+            assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Main);
+        }
         action(&mut app, Action::Options);
         assert_eq!(
             *app.world().resource::<State<Screen>>().get(),
@@ -2838,8 +3142,18 @@ mod tests {
         action(&mut app, Action::TextSize);
         action(&mut app, Action::Resolution);
         action(&mut app, Action::Window);
+        action(&mut app, Action::AudioTab);
+        assert_eq!(app.world().resource::<pages::Navigation>().options, 1);
+        action(&mut app, Action::MasterVolume);
+        action(&mut app, Action::MouseTab);
+        action(&mut app, Action::CameraSpeed);
+        action(&mut app, Action::EdgeScroll);
         action(&mut app, Action::Apply);
         let saved = Preferences::load(&settings).unwrap();
+        assert_eq!(saved.master_volume, 0.0);
+        assert_eq!(saved.camera_speed, 1.25);
+        assert!(!saved.edge_scroll);
+        assert_eq!(app.world().resource::<Preferences>(), &saved);
         assert!(saved.english && saved.fullscreen);
         assert_eq!(saved.text_scale, 1.25);
         assert_eq!(saved.window_size, [1366, 768]);

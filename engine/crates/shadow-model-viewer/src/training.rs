@@ -34,6 +34,7 @@ struct Config {
     fence_smoke: bool,
     smg_smoke: bool,
     window: (u32, u32),
+    language: crate::localization::Language,
 }
 #[derive(Resource)]
 pub(crate) struct Preview {
@@ -53,6 +54,11 @@ pub(crate) struct Orbit {
 }
 #[derive(Component)]
 pub(crate) struct MapCamera;
+#[derive(Resource)]
+pub(crate) struct CameraOptions {
+    pub speed: f32,
+    pub edge_scroll: bool,
+}
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let Some(config) = config()? else {
         return Ok(());
@@ -397,14 +403,23 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(orbit)
         .init_resource::<orders::ClickHistory>()
         .init_resource::<crate::selection::Selection>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Shadow Company · учебная карта / Rust + Bevy".into(),
-                resolution: config.window.into(),
+        .add_plugins(
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: if config.language == crate::localization::Language::English {
+                        "Shadow Company · training map / Rust + Bevy"
+                    } else {
+                        "Shadow Company · учебная карта / Rust + Bevy"
+                    }
+                    .into(),
+                    resolution: config.window.into(),
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }))
+        )
+        .insert_resource(config.language)
+        .add_plugins(crate::localization::LocalizationPlugin)
         .add_systems(
             Startup,
             (
@@ -639,7 +654,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|a| a == "--help") {
         println!(
-            "shadow-map-viewer --tutorial-smoke-json FILE.json | --combat-smoke-json FILE.json | --bda-smoke-json FILE.json | --grenade-smoke-json FILE.json | --fence-smoke-json FILE.json | --smg-smoke-json FILE.json | --medical-smoke-json FILE.json | --armor-smoke-json FILE.json | --vehicle-smoke-json FILE.json | --gate-smoke-json FILE.json | --jack-smoke-json FILE.json | --evacuation-smoke-json FILE.json | --selection-smoke-json FILE.json [--window 1280x720] --game-dir PATH [--overrides PATH] [--map NAME.mtf] [--terrain NAME] [--camera overview|camp] [--player on|off] [--player-action idle|walk|run|wave|pickup|stab|shoot|grenade|fence|smg|medical|armor|vehicle --player-seconds SECONDS] [--player-json FILE.json] [--scene-json FILE.json] [--screenshot FILE.png]\nБоец: ЛКМ — выбор/идти; двойной ЛКМ — бег; ПКМ — снять выбор, удержание — камера; H — остановить; T — слежение; Numpad — камера; Ctrl+P — пауза; Esc — учебная пауза; Ctrl+X — выход. Учебные: Home — начало, [ / ] — кадр. Просмотр карты: WASD — камера, ЛКМ/стрелки — вращение, C — площадка, Esc — выход."
+            "shadow-map-viewer --tutorial-smoke-json FILE.json | --combat-smoke-json FILE.json | --bda-smoke-json FILE.json | --grenade-smoke-json FILE.json | --fence-smoke-json FILE.json | --smg-smoke-json FILE.json | --medical-smoke-json FILE.json | --armor-smoke-json FILE.json | --vehicle-smoke-json FILE.json | --gate-smoke-json FILE.json | --jack-smoke-json FILE.json | --evacuation-smoke-json FILE.json | --selection-smoke-json FILE.json [--window 1280x720] [--language ru|en] --game-dir PATH [--overrides PATH] [--map NAME.mtf] [--terrain NAME] [--camera overview|camp] [--player on|off] [--player-action idle|walk|run|wave|pickup|stab|shoot|grenade|fence|smg|medical|armor|vehicle --player-seconds SECONDS] [--player-json FILE.json] [--scene-json FILE.json] [--screenshot FILE.png]\nБоец: ЛКМ — выбор/идти; двойной ЛКМ — бег; ПКМ — снять выбор, удержание — камера; H — остановить; T — слежение; Numpad — камера; Ctrl+P — пауза; Esc — учебная пауза; Ctrl+X — выход. Учебные: Home — начало, [ / ] — кадр. Просмотр карты: WASD — камера, ЛКМ/стрелки — вращение, C — площадка, Esc — выход."
         );
         return Ok(None);
     }
@@ -669,6 +684,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         fence_smoke: false,
         smg_smoke: false,
         window: (1280, 720),
+        language: crate::localization::Language::Russian,
     };
     let mut game = env::var_os("SHADOW_GAME_DIR").map(PathBuf::from);
     let mut seen = std::collections::HashSet::new();
@@ -682,6 +698,8 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             .filter(|v| !v.starts_with("--"))
             .ok_or_else(|| format!("после {key} нужно значение"))?;
         match key.as_str() {
+            "--language" => config.language = crate::localization::Language::parse(value)?,
+
             "--game-dir" => game = Some(value.into()),
             "--overrides" => config.overrides = Some(value.into()),
             "--map" => config.map = shadow_formats::normalize_path(value)?,
@@ -1094,6 +1112,7 @@ pub(crate) fn controls(
     inventory: Option<Res<inventory::Inventory>>,
     native_selection: Option<Res<crate::selection::NativeSmoke>>,
     pointer: Option<Res<crate::selection::Selection>>,
+    camera_options: Option<Res<CameraOptions>>,
 ) {
     if inventory.is_some_and(|inv| inv.open || inv.consumed_input) {
         return;
@@ -1108,6 +1127,7 @@ pub(crate) fn controls(
         return;
     }
     let playable = player.is_some();
+    let camera_speed = camera_options.as_ref().map_or(1.0, |p| p.speed);
     let ctrl = input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight);
     if (!playable && integrated.is_none() && input.just_pressed(KeyCode::Escape))
         || (ctrl && input.just_pressed(KeyCode::KeyX))
@@ -1121,6 +1141,7 @@ pub(crate) fn controls(
         *orbit = camp_view();
     }
     if playable
+        && camera_options.as_ref().is_none_or(|p| p.edge_scroll)
         && input.just_pressed(KeyCode::Home)
         && let Some(player) = &player
     {
@@ -1199,9 +1220,13 @@ pub(crate) fn controls(
         }
     }
     let distance = orbit.distance;
-    orbit.target += (right * pan.x + forward * pan.y).normalize_or_zero() * distance * 0.3 * dt;
+    orbit.target +=
+        (right * pan.x + forward * pan.y).normalize_or_zero() * distance * 0.3 * dt * camera_speed;
     if playable && !pointer_blocked && mouse.pressed(MouseButton::Right) {
-        orbit.target += (right * (-motion.delta.x) + forward * motion.delta.y) * distance * 0.002;
+        orbit.target += (right * (-motion.delta.x) + forward * motion.delta.y)
+            * distance
+            * 0.002
+            * camera_speed;
     }
 }
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]

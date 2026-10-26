@@ -3,13 +3,16 @@ use std::{
     error::Error,
     path::{Path, PathBuf},
 };
-#[derive(Debug, Clone, PartialEq)]
+#[derive(bevy::prelude::Resource, Debug, Clone, PartialEq)]
 pub struct Preferences {
     pub english: bool,
     pub fullscreen: bool,
     pub window_size: [u32; 2],
     pub text_scale: f32,
     pub animate_background: bool,
+    pub master_volume: f32,
+    pub camera_speed: f32,
+    pub edge_scroll: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -19,6 +22,9 @@ impl Default for Preferences {
             window_size: [1280, 720],
             text_scale: 1.0,
             animate_background: true,
+            master_volume: 1.0,
+            camera_speed: 1.0,
+            edge_scroll: true,
         }
     }
 }
@@ -52,6 +58,17 @@ impl Preferences {
                 size
             }
         };
+        let setting =
+            |name: &str, default: f32, min: f32, max: f32| -> Result<f32, Box<dyn Error>> {
+                let n = match value.get(name) {
+                    None => default,
+                    Some(v) => v.as_f64().ok_or("неверный числовой параметр")? as f32,
+                };
+                if !n.is_finite() || !(min..=max).contains(&n) {
+                    return Err(format!("неверный параметр {name}").into());
+                }
+                Ok(n)
+            };
         Ok(Self {
             english,
             text_scale,
@@ -60,10 +77,16 @@ impl Preferences {
             animate_background: value["animate_background"]
                 .as_bool()
                 .ok_or("нет режима фонов")?,
+            master_volume: setting("master_volume", 1.0, 0.0, 1.0)?,
+            camera_speed: setting("camera_speed", 1.0, 0.5, 2.0)?,
+            edge_scroll: match value.get("edge_scroll") {
+                None => true,
+                Some(v) => v.as_bool().ok_or("неверный режим прокрутки")?,
+            },
         })
     }
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({"version":1,"language":if self.english {"en"} else {"ru"},"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background})
+        serde_json::json!({"version":1,"language":if self.english {"en"} else {"ru"},"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background,"master_volume":self.master_volume,"camera_speed":self.camera_speed,"edge_scroll":self.edge_scroll})
     }
     pub fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
         if !path.exists() {
@@ -131,6 +154,9 @@ mod tests {
             window_size: [3440, 1440],
             text_scale: 1.5,
             animate_background: false,
+            master_volume: 0.5,
+            camera_speed: 1.5,
+            edge_scroll: false,
         };
         assert_eq!(Preferences::from_json(&p.json()).unwrap(), p);
         for (key, value) in [
@@ -142,11 +168,27 @@ mod tests {
             ("window_size", serde_json::json!([1920])),
             ("window_size", serde_json::json!([1920, 1080, 1])),
             ("window_size", serde_json::json!([99999999999_u64, 1080])),
+            ("master_volume", serde_json::json!(1.1)),
+            ("master_volume", serde_json::json!("quiet")),
+            ("camera_speed", serde_json::json!(0.1)),
+            ("edge_scroll", serde_json::json!(1)),
         ] {
             let mut bad = p.json();
             bad[key] = value;
             assert!(Preferences::from_json(&bad).is_err());
         }
+    }
+    #[test]
+    fn old_settings_keep_original_audio_and_camera_defaults() {
+        let mut json = Preferences::default().json();
+        let object = json.as_object_mut().unwrap();
+        for key in ["master_volume", "camera_speed", "edge_scroll"] {
+            object.remove(key);
+        }
+        assert_eq!(
+            Preferences::from_json(&json).unwrap(),
+            Preferences::default()
+        );
     }
     #[test]
     fn saves_atomically_to_unicode_path_and_replaces_existing_settings() {

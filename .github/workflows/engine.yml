@@ -43,6 +43,9 @@ jobs:
         shell: bash
     env:
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_PROFILE_RELEASE_STRIP: symbols
       RUSTFLAGS: ${{ matrix.platform == 'windows-x86_64' && '-C target-feature=+crt-static' || '' }}
       PYTHONUTF8: '1'

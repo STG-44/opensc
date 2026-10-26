@@ -9,6 +9,7 @@ mod grenade;
 mod hud;
 mod hud_layout;
 mod inventory;
+mod localization;
 mod map_scene;
 mod medical;
 mod motion;
