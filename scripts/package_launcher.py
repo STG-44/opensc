@@ -210,11 +210,13 @@ def source_hashes():
              'crates/report-protocol/Cargo.toml', 'assets/opensc.png', 'assets/opensc.ico', 'assets/opensc-1024.png', 'deploy/site/assets/operation-map.jpg']]
     paths += list((PROJECT / 'src').rglob('*.rs'))
     paths += list((PROJECT / 'crates/report-protocol/src').rglob('*.rs'))
+    paths += [PROJECT/'engine/Cargo.toml',PROJECT/'engine/crates/shadow-formats/Cargo.toml',PROJECT/'third-party/unshield-LICENSE.txt']
+    paths += list((PROJECT/'engine/crates/shadow-formats/src').rglob('*.rs'))
     return {p.relative_to(PROJECT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
 
 
 def notices(metadata, destination):
-    text = ['OpenSC Launcher: third-party notices\n']
+    text = ['OpenSC Launcher: third-party notices\n', '\nInstallShield format reference: twogood/unshield\n', (PROJECT/'third-party/unshield-LICENSE.txt').read_text(encoding='utf-8')]
     for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
         if package['source'] is None:
             continue

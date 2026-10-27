@@ -2,7 +2,7 @@ name: Build launcher
 on:
   workflow_dispatch:
   pull_request:
-    paths: ["src/**", ".gitattributes", "crates/report-protocol/**", "tests/**", "scripts/**", "Cargo.*", ".github/workflows/build.yml"]
+    paths: ["src/**", "engine/crates/shadow-formats/**", "engine/Cargo.toml", "third-party/**", ".gitattributes", "crates/report-protocol/**", "tests/**", "scripts/**", "Cargo.*", ".github/workflows/build.yml"]
   push:
     tags: ["launcher-v*"]
 

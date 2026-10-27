@@ -159,7 +159,16 @@ fn prepare_verified(
         return Ok(None);
     }
     let store = root.join("launcher-update");
-    let installed = updater::install(available, &store, &AtomicBool::new(false), |_| {})?;
+    // An installed launcher bootstrap can reopen the verified cached version.
+    let installed = if let Some(installed) = updater::Installed::load(&store)?
+        && installed.source.origin() == available.source.origin()
+        && installed.release.fingerprint()? == available.release.fingerprint()?
+        && installed.verify(&store).is_ok()
+    {
+        installed
+    } else {
+        updater::install(available, &store, &AtomicBool::new(false), |_| {})?
+    };
     let platform = crate::platform();
     let file = available
         .release
@@ -286,6 +295,52 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn verified_cached_launcher_is_reused_without_downloading_again() {
+        use sha2::{Digest, Sha256};
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
+        let store = root.join("launcher-update");
+        let platform = crate::platform();
+        let entry = if cfg!(windows) {
+            "bin/opensc-launcher.exe"
+        } else {
+            "bin/opensc-launcher"
+        };
+        let binary = b"cached launcher";
+        let notices = b"license";
+        let release:crate::manifest::Release=serde_json::from_value(serde_json::json!({"version":"0.5.0","notes":"cache fixture","data_directory":null,"entrypoints":{platform.clone():entry},"files":[{"path":entry,"url":format!("launcher-releases/0.5.0/{platform}/{entry}"),"size":binary.len(),"sha256":crate::manifest::hex(&Sha256::digest(binary)),"executable":true,"platform":platform},{"path":"THIRD-PARTY-NOTICES.txt","url":format!("launcher-releases/0.5.0/{platform}/THIRD-PARTY-NOTICES.txt"),"size":notices.len(),"sha256":crate::manifest::hex(&Sha256::digest(notices)),"executable":false,"platform":platform}]})).unwrap();
+        let available = Available {
+            source: Url::parse("http://127.0.0.1:9/updates/launcher-v1.json").unwrap(),
+            release,
+        };
+        let installed = updater::Installed {
+            schema_version: 1,
+            platform: platform.clone(),
+            source: available.source.clone(),
+            release: available.release.clone(),
+        };
+        let directory = installed.directory(&store).unwrap();
+        fs::create_dir_all(directory.join("bin")).unwrap();
+        fs::write(directory.join(entry), binary).unwrap();
+        fs::write(directory.join("THIRD-PARTY-NOTICES.txt"), notices).unwrap();
+        atomic_json(&store.join("active.json"), &installed).unwrap();
+        let index = SignedIndex {
+            schema_version: 1,
+            payload: serde_json::to_string(
+                &serde_json::json!({"schema_version":1,"release":available.release}),
+            )
+            .unwrap(),
+            signature: "00".repeat(64),
+        };
+        let prepared = prepare_verified(root, &available, &index, "0.4.1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.executable, directory.join(entry));
+        fs::write(directory.join(entry), b"damaged launcher").unwrap();
+        assert!(prepare_verified(root, &available, &index, "0.4.1").is_err());
+    }
+
     #[test]
     fn versions_do_not_downgrade_and_handoff_tokens_are_local_names() {
         assert!(version("0.4.1").unwrap() > version("0.4.0").unwrap());

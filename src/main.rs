@@ -6,7 +6,7 @@ mod ui;
 use anyhow::{Context, Result, bail};
 use opensc_launcher::{
     config::{Config, default_root},
-    resources, self_update, updater,
+    importer, resources, self_update, updater,
 };
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 
@@ -24,7 +24,7 @@ fn run() -> Result<()> {
     match command.as_deref() {
         Some("--help" | "-h") => {
             println!(
-                "OpenSC Launcher {}\n\nБез аргументов: открыть лаунчер\n--check [URL]       Проверить опубликованные сборки\n--install [URL]     Установить сборку для текущей системы\n--verify            Проверить установленную сборку\n--verify-launcher-index FILE [URL]  Проверить подпись индекса лаунчера\n--launch [папка]     Запустить установленную игру без окна лаунчера\n--inspect <папка>    Инвентаризация ресурсов в JSON\n--data <папка>       Открыть лаунчер с выбранной папкой ресурсов\n\nOPENSC_HOME задаёт отдельную папку настроек и установок.",
+                "OpenSC Launcher {}\n\nБез аргументов: открыть лаунчер\n--check [URL]       Проверить опубликованные сборки\n--install [URL]     Установить сборку для текущей системы\n--verify            Проверить установленную сборку\n--verify-launcher-index FILE [URL]  Проверить подпись индекса лаунчера\n--launch [папка]     Запустить установленную игру без окна лаунчера\n--inspect <папка>    Инвентаризация ресурсов в JSON\n--import <источник>  Импорт игры из папки или MDF/MDS/ISO\n--data <папка>       Открыть лаунчер с выбранной папкой ресурсов\n\nOPENSC_HOME задаёт отдельную папку настроек и установок.",
                 env!("CARGO_PKG_VERSION")
             );
         }
@@ -43,6 +43,20 @@ fn run() -> Result<()> {
                 "Подпись индекса верна. Лаунчер {}. Платформ: {}",
                 available.release.version,
                 available.release.entrypoints.len()
+            );
+        }
+        Some("--import") => {
+            let source = PathBuf::from(args.next().context("Укажи папку игры, MDF/MDS или ISO")?);
+            let inventory =
+                importer::import(&root, &source, &AtomicBool::new(false), |phase, p| {
+                    eprintln!("{phase}: {} / {}", p.downloaded, p.total)
+                })?;
+            let mut config = Config::load(&root)?;
+            config.data_path = inventory.root.to_string_lossy().into_owned();
+            config.save(&root)?;
+            println!(
+                "Игровые файлы скопированы и проверены: {}",
+                inventory.root.display()
             );
         }
         Some("--inspect") => {
@@ -88,10 +102,19 @@ fn run() -> Result<()> {
                 !data.trim().is_empty(),
                 "Укажи --launch PATH или папку в настройках"
             );
+            let mut data_path = resources::resolve_data(&PathBuf::from(data));
+            if !importer::is_managed(&root, &data_path) {
+                let inventory =
+                    importer::import(&root, &data_path, &AtomicBool::new(false), |phase, p| {
+                        eprintln!("{phase}: {} / {}", p.downloaded, p.total)
+                    })?;
+                data_path = inventory.root;
+                let mut saved = Config::load(&root)?;
+                saved.data_path = data_path.to_string_lossy().into_owned();
+                saved.save(&root)?;
+            }
             let installed = updater::Installed::load(&root)?.context("Движок ещё не установлен")?;
-            let status = installed
-                .launch(&root, &resources::resolve_data(&PathBuf::from(data)))?
-                .wait()?;
+            let status = installed.launch(&root, &data_path)?.wait()?;
             anyhow::ensure!(
                 status.success(),
                 "Игра завершилась с ошибкой: {status}; см. engine.log"

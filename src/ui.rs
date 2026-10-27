@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use opensc_launcher::{
     config::Config,
+    importer,
     resources::{self, Inventory},
     self_update,
     updater::{self, Available, Installed, Progress},
@@ -26,6 +27,8 @@ const BACKGROUND: Color32 = Color32::from_rgb(13, 18, 15);
 enum Event {
     Checked(Result<Option<Available>, String>),
     Inspected(Result<Inventory, String>),
+    Imported(Result<Inventory, String>),
+    ImportProgress(String, Progress),
     Progress(Progress),
     Installed(Result<Installed, String>),
     Verified(Result<(), String>),
@@ -46,6 +49,7 @@ pub struct Launcher {
     settings: bool,
     child: Option<Child>,
     inspected_path: Option<String>,
+    importing: bool,
     hero: Option<egui::TextureHandle>,
     next_check: Instant,
     blocked_update: Option<String>,
@@ -113,6 +117,7 @@ impl Launcher {
             settings: false,
             child: None,
             inspected_path: None,
+            importing: false,
             hero,
             next_check: Instant::now() + CHECK_INTERVAL,
             blocked_update: None,
@@ -248,6 +253,11 @@ impl Launcher {
         if self.busy() || self.config.data_path.trim().is_empty() {
             return;
         }
+        if !importer::is_managed(&self.root, Path::new(&self.config.data_path)) {
+            let source = PathBuf::from(&self.config.data_path);
+            self.import_data(source, ctx);
+            return;
+        }
         self.config.data_path = resources::resolve_data(Path::new(&self.config.data_path))
             .to_string_lossy()
             .into_owned();
@@ -263,6 +273,35 @@ impl Launcher {
         std::thread::spawn(move || {
             let result = resources::inspect(Path::new(&path)).map_err(|e| format!("{e:#}"));
             let _ = tx.send(Event::Inspected(result));
+            ctx.request_repaint();
+        });
+    }
+
+    fn import_data(&mut self, source: PathBuf, ctx: &egui::Context) {
+        if self.busy() || self.child.is_some() {
+            return;
+        }
+        self.importing = true;
+        self.inspected_path = Some(self.config.data_path.clone());
+        self.error = None;
+        self.cancel.store(false, Ordering::Relaxed);
+        self.status = "Подготовка игровых файлов…".into();
+        self.progress = Some(Progress {
+            file: "Проверка источника".into(),
+            downloaded: 0,
+            total: 0,
+        });
+        self.download_started = Some(Instant::now());
+        let (tx, rx) = mpsc::channel();
+        self.receiver = Some(rx);
+        let (root, cancel, ctx) = (self.root.clone(), self.cancel.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let result = importer::import(&root, &source, &cancel, |phase, p| {
+                let _ = tx.send(Event::ImportProgress(phase.into(), p));
+                ctx.request_repaint();
+            })
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Event::Imported(result));
             ctx.request_repaint();
         });
     }
@@ -324,6 +363,14 @@ impl Launcher {
             .map(|rx| rx.try_iter().collect())
             .unwrap_or_default();
         for event in events {
+            if let Event::ImportProgress(phase, progress) = event {
+                if self.status != phase {
+                    self.download_started = Some(Instant::now());
+                }
+                self.status = phase;
+                self.progress = Some(progress);
+                continue;
+            }
             if let Event::Progress(progress) = event {
                 self.progress = Some(progress);
                 continue;
@@ -349,6 +396,28 @@ impl Launcher {
                     self.status = format!("В папке ресурсов {} файлов", inventory.files);
                     self.inventory = Some(inventory);
                 }
+                Event::Imported(result) => {
+                    self.importing = false;
+                    match result {
+                        Ok(inventory) => {
+                            self.config.data_path = inventory.root.to_string_lossy().into_owned();
+                            self.inspected_path = Some(self.config.data_path.clone());
+                            self.inventory = Some(inventory);
+                            self.status =
+                                "Игровые файлы скопированы и проверены. Можно играть".into();
+                            self.save();
+                        }
+                        Err(error) => {
+                            self.status = if self.cancel.load(Ordering::Relaxed) {
+                                "Импорт остановлен; прежние игровые файлы сохранены"
+                            } else {
+                                "Не удалось импортировать игру; прежние файлы сохранены"
+                            }
+                            .into();
+                            self.error = (!self.cancel.load(Ordering::Relaxed)).then_some(error);
+                        }
+                    }
+                }
                 Event::Installed(Ok(installed)) => {
                     self.status = format!("Версия {} установлена", installed.release.version);
                     self.installed = Some(installed);
@@ -372,7 +441,7 @@ impl Launcher {
                         self.error = Some(error);
                     }
                 }
-                Event::Progress(_) => unreachable!(),
+                Event::Progress(_) | Event::ImportProgress(_, _) => unreachable!(),
             }
             self.activity
                 .push(self.error.as_ref().unwrap_or(&self.status).clone());
@@ -437,46 +506,34 @@ impl Launcher {
     fn resource_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         card(ui, |ui| {
             eyebrow(ui, "02 / РЕСУРСЫ ИГРЫ");
-            ui.label(RichText::new("Папка оригинальной Shadow Company").size(19.0));
-            ui.label(
-                RichText::new(
-                    "Укажи папку Data из своей копии игры. Выбор сохраняется при обновлениях.",
-                )
-                .color(MUTED),
-            );
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(!self.busy(), |ui| {
-                    let width = (ui.available_width() - 175.0).max(200.0);
-                    if ui
-                        .add_sized(
-                            [width, 36.0],
-                            egui::TextEdit::singleline(&mut self.config.data_path)
-                                .hint_text("Путь к папке Data"),
-                        )
-                        .changed()
-                    {
-                        self.inventory = None;
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("Выбрать папку").strong().color(BACKGROUND),
-                            )
-                            .fill(ACCENT),
-                        )
-                        .clicked()
+            ui.label(RichText::new("Игровые файлы Shadow Company").size(19.0));
+            ui.label(RichText::new("Выбери установленную игру, папку оригинального диска или образ MDF/MDS. Данные автоматически копируются в каталог OpenSC; исходные файлы сохраняются.").color(MUTED));
+            ui.add_enabled_ui(!self.busy() && self.child.is_none(), |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Выбрать папку игры / диска").clicked()
                         && let Some(path) = rfd::FileDialog::new()
-                            .set_title("Ресурсы Shadow Company")
+                            .set_title("Исходные файлы Shadow Company")
                             .pick_folder()
                     {
-                        self.config.data_path = path.to_string_lossy().into_owned();
-                        self.inventory = None;
-                        self.inspected_path = None;
-                        self.inspect(ctx);
+                        self.import_data(path, ctx);
+                    }
+                    if ui.button("Выбрать образ MDF/MDS или ISO").clicked()
+                        && let Some(path) = rfd::FileDialog::new()
+                            .set_title("Оригинальный образ Shadow Company")
+                            .add_filter("Образ игры", &["mds", "mdf", "iso", "MDS", "MDF", "ISO"])
+                            .pick_file()
+                    {
+                        self.import_data(path, ctx);
                     }
                 });
             });
+            if !self.config.data_path.is_empty() {
+                ui.label(
+                    RichText::new(format!("Папка игровых данных: {}", self.config.data_path))
+                        .small()
+                        .color(MUTED),
+                );
+            }
             if let Some(inventory) = &self.inventory {
                 ui.label(
                     RichText::new(format!(
@@ -597,12 +654,22 @@ impl Launcher {
                             .small()
                             .color(MUTED),
                         );
-                        if ui.small_button("Остановить загрузку").clicked() {
+                        ui.label(RichText::new(&progress.file).small().color(MUTED));
+                        if ui
+                            .small_button(if self.importing {
+                                "Отменить импорт"
+                            } else {
+                                "Остановить загрузку"
+                            })
+                            .clicked()
+                        {
                             self.cancel.store(true, Ordering::Relaxed);
-                            self.blocked_update = self
-                                .available
-                                .as_ref()
-                                .and_then(|a| a.release.fingerprint().ok());
+                            if !self.importing {
+                                self.blocked_update = self
+                                    .available
+                                    .as_ref()
+                                    .and_then(|a| a.release.fingerprint().ok());
+                            }
                         }
                     } else {
                         let version = self
@@ -652,7 +719,9 @@ impl Launcher {
                 let text = if self.child.is_some() {
                     "ИГРА ЗАПУЩЕНА"
                 } else if self.busy() {
-                    if self.progress.is_some() {
+                    if self.importing {
+                        "ИМПОРТ…"
+                    } else if self.progress.is_some() {
                         "ЗАГРУЗКА…"
                     } else {
                         "ПРОВЕРКА…"
@@ -800,9 +869,9 @@ impl eframe::App for Launcher {
                         egui::ScrollArea::vertical().id_salt("news").show(ui, |ui| {
                             eyebrow(ui, "ОБНОВЛЕНИЯ ПРОЕКТА");
                             ui.add_space(8.0);
-                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", "Меню и русский / English", self.available.as_ref().map(|a| a.release.notes.as_str()).unwrap_or("Новое главное меню, анимация кнопок, современные шрифты и переключение языка интерфейса."));
+                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", "Интерфейс: Русский / English", self.available.as_ref().map(|a| a.release.notes.as_str()).unwrap_or("Новое главное меню, анимация кнопок, современные шрифты и переключение языка интерфейса."));
                             ui.add_space(10.0);
-                            news_card(ui, "НАЧАЛО ИГРЫ", "Ваша копия Shadow Company", "Один раз выберите папку Data в настройках. Лаунчер запомнит путь и установит обновления движка.");
+                            news_card(ui, "НАЧАЛО ИГРЫ", "Ваша копия Shadow Company", "Выберите папку игры или образ MDF/MDS в настройках. Лаунчер сам скопирует игровые данные и будет обновлять движок.");
                             ui.add_space(10.0);
                             news_card(ui, "ТЕСТОВЫЙ ПРОЕКТ", "Возвращение на учебную карту", "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
                         });
@@ -821,25 +890,13 @@ impl eframe::App for Launcher {
                 .show(ctx, |ui| {
                     self.resource_card(ui, ctx);
                     ui.add_space(14.0);
-                    ui.label("Адрес манифеста обновлений");
-                    ui.add_enabled(
-                        !self.busy(),
-                        egui::TextEdit::singleline(&mut self.config.manifest_url)
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.label(
-                        RichText::new("Выпуски и пакеты ресурсов загружаются с этого сервера.")
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.add_space(8.0);
                     ui.add_enabled_ui(!self.busy(), |ui| {
-                        ui.checkbox(
+                    ui.checkbox(
                             &mut self.config.auto_update,
                             "Обновлять игру при запуске лаунчера",
                         );
                     });
-                    ui.checkbox(&mut self.config.auto_update_launcher,"Автоматически обновлять сам лаунчер (подписанные выпуски)");
+                    ui.checkbox(&mut self.config.auto_update_launcher,"Автоматически обновлять лаунчер");
                     ui.label(RichText::new(&self.launcher_status).small().color(MUTED));
                     ui.label("Улучшенные ресурсы (пусто — папка overrides в OpenSC)");
                     ui.add_enabled(

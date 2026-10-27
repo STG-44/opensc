@@ -1,5 +1,7 @@
 pub mod config;
+pub mod importer;
 pub mod manifest;
+mod media;
 pub mod reports;
 pub mod resources;
 pub mod self_update;

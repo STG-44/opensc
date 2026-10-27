@@ -115,6 +115,7 @@ fn app(root: &Path, source: &str) -> Launcher {
         settings: false,
         child: None,
         inspected_path: None,
+        importing: false,
         hero: None,
         next_check: Instant::now(),
         blocked_update: None,
@@ -235,4 +236,50 @@ fn running_game_defers_installation_until_the_child_exits() {
     settle(&mut app, &ctx);
     assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
     assert!(app.installed.is_some());
+}
+
+#[test]
+fn configured_external_data_is_imported_and_preference_values_are_preserved() {
+    let server = Server::new();
+    let folder = tempfile::tempdir().unwrap();
+    let source = folder.path().join("Original game");
+    std::fs::create_dir(&source).unwrap();
+    let names = [
+        "config/window_bases/main_menu.txt",
+        "campaign/training/training.txt",
+    ];
+    let mut archive = vec![0x1a, 0xfa, 0x31, 0xc1, 0xde, 0xed, 0x42, 0x13];
+    archive.extend(2u32.to_le_bytes());
+    archive.extend([0; 32]);
+    let mut offset = names.iter().map(|s| 20 + s.len() + 1).sum::<usize>();
+    for name in names {
+        for n in [name.len() as u32 + 1, 7, offset as u32, 0, 0] {
+            archive.extend(n.to_le_bytes());
+        }
+        archive.extend(name.bytes().chain([0]).map(|b| b ^ 0xff));
+        offset += 7;
+    }
+    archive.extend(b"fixturefixture");
+    std::fs::write(source.join("core.gut"), &archive).unwrap();
+    let root = folder.path().join("profile");
+    let ctx = egui::Context::default();
+    let mut app = app(&root, &server.source);
+    app.config.data_path = source.to_string_lossy().into_owned();
+    app.config.auto_update_launcher = false;
+    settle(&mut app, &ctx);
+    let inventory = app.inventory.as_ref().unwrap();
+    assert!(opensc_launcher::importer::is_managed(
+        &root,
+        &inventory.root
+    ));
+    assert_eq!(
+        std::fs::read(inventory.root.join("core.gut")).unwrap(),
+        archive
+    );
+    assert_eq!(std::fs::read(source.join("core.gut")).unwrap(), archive);
+    let saved = Config::load(&root).unwrap();
+    assert_eq!(saved.data_path, app.config.data_path);
+    assert_eq!(saved.manifest_url, server.source);
+    assert!(!saved.auto_update_launcher);
+    assert!(app.blocked_update.is_none());
 }
