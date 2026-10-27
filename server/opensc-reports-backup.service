@@ -1,0 +1,11 @@
+[Unit]
+Description=Consistent backup of the OpenSC bug report database
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/shadow-company/backup-reports.sh
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true

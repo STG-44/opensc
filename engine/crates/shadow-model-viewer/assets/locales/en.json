@@ -133,5 +133,10 @@
   "Закрыть": "Close",
   "нет": "none",
   " м\n": " m\n",
-  " с ·": " s ·"
+  " с ·": " s ·",
+  "Подойти и поднять тело": "Move to and pick up the body",
+  "Нет места, чтобы положить тело": "There is no room to put the body down",
+  "Джон несёт тело · D: положить": "John is carrying a body · D: put down",
+  "Тело положено": "Body put down",
+  "ЛКМ: поднять тело": "Left click: pick up body"
 }

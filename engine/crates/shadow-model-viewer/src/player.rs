@@ -41,6 +41,7 @@ pub struct Player {
     pub postures: Option<crate::stance::Clips>,
     pub posture_transition: Option<(usize, f32, crate::stance::Posture)>,
     pub rifle_equipped: bool,
+    pub carry_movement: Option<[usize; 3]>,
     basis: Transform,
     focus: Vec3,
     spawn: Vec3,
@@ -146,6 +147,7 @@ pub(crate) fn prepare_actor(
         postures: None,
         posture_transition: None,
         rifle_equipped: false,
+        carry_movement: None,
         gesture: false,
     })
 }
@@ -248,6 +250,7 @@ impl Player {
         if !self.selected
             || self.playback.paused
             || self.posture_transition.is_some()
+            || self.carry_movement.is_some()
             || target == self.posture
         {
             return false;
@@ -272,6 +275,9 @@ impl Player {
         self.posture_transition.is_some()
     }
     pub fn idle_clip(&self) -> usize {
+        if let Some(clips) = self.carry_movement {
+            return clips[0];
+        }
         self.postures
             .as_ref()
             .map(|c| c.idle[self.posture.index()])
@@ -368,6 +374,7 @@ impl Player {
             self.posture = crate::stance::Posture::Stand;
             self.posture_transition = None;
             self.rifle_equipped = false;
+            self.carry_movement = None;
             self.weapon = None;
             self.pickup_seconds = None;
             self.action = None;
@@ -444,7 +451,9 @@ impl Player {
             let selected = if direction != Vec3::ZERO {
                 self.heading = (-direction.x).atan2(-direction.z);
                 self.gesture = false;
-                if let Some(c) = &self.postures {
+                if let Some(clips) = self.carry_movement {
+                    clips[1 + usize::from(self.running)]
+                } else if let Some(c) = &self.postures {
                     if self.posture == crate::stance::Posture::Stand && self.rifle_equipped {
                         c.rifle_move[usize::from(self.running)]
                     } else if self.running {
@@ -717,6 +726,7 @@ pub(crate) mod tests {
             postures: None,
             posture_transition: None,
             rifle_equipped: false,
+            carry_movement: None,
             basis: Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
                 .with_scale(Vec3::splat(WORLD_SCALE)),
             focus: Vec3::Y,

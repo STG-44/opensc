@@ -284,6 +284,9 @@ pub fn input(
     let (Some(mut a), Some(mut p), Some(mut inv)) = (a, p, inv) else {
         return;
     };
+    if p.carry_movement.is_some() {
+        return;
+    }
     if t.is_some_and(|t| t.active.is_some() || t.consumed_input) {
         return;
     }

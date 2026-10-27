@@ -48,12 +48,30 @@ impl Server {
                     // with unread request bytes can reset it on Windows.
                     let mut request = Vec::new();
                     let mut chunk = [0u8; 4096];
-                    while request.len() <= 65536 && !request.ends_with(b"\r\n\r\n") {
+                    while request.len() <= 65536 && !request.windows(4).any(|w| w == b"\r\n\r\n") {
                         let count = stream.read(&mut chunk).unwrap_or(0);
                         if count == 0 {
                             break;
                         }
                         request.extend_from_slice(&chunk[..count]);
+                    }
+                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':')
+                                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        while request.len() < end + 4 + length && request.len() <= 65536 {
+                            let count = stream.read(&mut chunk).unwrap_or(0);
+                            if count == 0 {
+                                break;
+                            }
+                            request.extend_from_slice(&chunk[..count]);
+                        }
                     }
                     let header = format!(
                         "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -79,6 +97,99 @@ impl Drop for Server {
         self.done.store(true, Ordering::Relaxed);
         self.worker.take().unwrap().join().unwrap();
     }
+}
+
+#[test]
+fn bug_report_outbox_survives_network_failure_and_success_keeps_a_receipt() {
+    use opensc_launcher::{config::Config, reports};
+    use opensc_report_protocol::{Diagnostics, Report};
+    let root = tempfile::tempdir().unwrap();
+    let report = Report {
+        schema_version: 1,
+        request_id: "f".repeat(32),
+        category: "interface".into(),
+        title: "Inventory input freeze".into(),
+        steps: "Open training and click the inventory button".into(),
+        expected: "Controls work".into(),
+        actual: "Inventory stays open".into(),
+        diagnostics: Diagnostics {
+            launcher_version: "0.4.0".into(),
+            platform: opensc_launcher::platform(),
+            ..Diagnostics::default()
+        },
+    };
+    let unavailable = Server::new(b"temporarily unavailable".to_vec(), 503);
+    let mut config = Config {
+        manifest_url: unavailable.url.to_string(),
+        ..Config::default()
+    };
+    assert!(reports::send(root.path(), &config, &report).is_err());
+    assert_eq!(
+        reports::pending(root.path()).unwrap().request_id,
+        report.request_id
+    );
+    let available = Server::new(
+        br#"{"ticket_id":"OSC-123456ABCDEF","status":"new","duplicate":true}"#.to_vec(),
+        201,
+    );
+    config.manifest_url = available.url.to_string();
+    let receipt = reports::send(root.path(), &config, &report).unwrap();
+    assert_eq!(receipt.ticket_id, "OSC-123456ABCDEF");
+    assert!(receipt.duplicate && reports::pending(root.path()).is_none());
+    assert!(
+        root.path()
+            .join("reports/receipts")
+            .join(format!("{}.json", report.request_id))
+            .is_file()
+    );
+}
+
+#[test]
+fn throttled_download_honors_retry_after_and_installs_without_manual_restart() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let source = Url::parse(&format!(
+        "http://{}/manifest.json",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let worker = thread::spawn(move || {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = stream.read(&mut buffer).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let response = if attempt == 0 {
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nengine"
+            };
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    let root = tempfile::tempdir().unwrap();
+    let start = std::time::Instant::now();
+    let installed = updater::install(
+        &Available {
+            source,
+            release: release(b"engine"),
+        },
+        root.path(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    assert!(start.elapsed() >= Duration::from_secs(1));
+    installed.verify(root.path()).unwrap();
+    worker.join().unwrap();
 }
 
 #[test]

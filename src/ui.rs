@@ -1,7 +1,8 @@
-use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
+use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use opensc_launcher::{
     config::Config,
     resources::{self, Inventory},
+    self_update,
     updater::{self, Available, Installed, Progress},
 };
 use std::{
@@ -12,10 +13,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-const ACCENT: Color32 = Color32::from_rgb(218, 177, 103);
+const ACCENT: Color32 = Color32::from_rgb(224, 167, 83);
+const PLAY: Color32 = Color32::from_rgb(190, 65, 31);
+const CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const MUTED: Color32 = Color32::from_rgb(161, 173, 163);
 const PANEL: Color32 = Color32::from_rgb(24, 31, 26);
 const BACKGROUND: Color32 = Color32::from_rgb(13, 18, 15);
@@ -44,6 +47,15 @@ pub struct Launcher {
     child: Option<Child>,
     inspected_path: Option<String>,
     hero: Option<egui::TextureHandle>,
+    next_check: Instant,
+    blocked_update: Option<String>,
+    download_started: Option<Instant>,
+    reports: crate::report_ui::Form,
+    launcher_receiver: Option<Receiver<Result<Option<self_update::Prepared>, String>>>,
+    launcher_ready: Option<self_update::Prepared>,
+    launcher_handoff: Option<self_update::Handoff>,
+    launcher_status: String,
+    next_launcher_check: Instant,
 }
 
 impl Launcher {
@@ -85,6 +97,7 @@ impl Launcher {
         }
         let installed = Installed::load(&root);
         let error = error.or_else(|| installed.as_ref().err().map(|e| format!("{e:#}")));
+        let reports = crate::report_ui::Form::load(&root);
         let mut launcher = Self {
             root,
             config,
@@ -101,9 +114,105 @@ impl Launcher {
             child: None,
             inspected_path: None,
             hero,
+            next_check: Instant::now() + CHECK_INTERVAL,
+            blocked_update: None,
+            download_started: None,
+            reports,
+            launcher_receiver: None,
+            launcher_ready: None,
+            launcher_handoff: None,
+            launcher_status: String::new(),
+            next_launcher_check: Instant::now(),
         };
         launcher.check(&cc.egui_ctx);
+        launcher.check_launcher(&cc.egui_ctx);
+        if let Err(error) = self_update::signal_ready(&launcher.root) {
+            launcher
+                .activity
+                .push(format!("Подтверждение запуска: {error:#}"));
+        }
         launcher
+    }
+
+    fn check_launcher(&mut self, ctx: &egui::Context) {
+        if self.launcher_receiver.is_some()
+            || self.launcher_handoff.is_some()
+            || self.busy()
+            || !self.config.auto_update_launcher
+        {
+            return;
+        }
+        self.next_launcher_check = Instant::now() + Duration::from_secs(3600);
+        self.launcher_status = "Проверка обновления лаунчера…".into();
+        let (tx, rx) = mpsc::channel();
+        self.launcher_receiver = Some(rx);
+        let (root, source, ctx) = (
+            self.root.clone(),
+            self.config.manifest_url.clone(),
+            ctx.clone(),
+        );
+        std::thread::spawn(move || {
+            let result = self_update::prepare(&root, &source).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_launcher(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self
+            .launcher_receiver
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        {
+            self.launcher_receiver = None;
+            match result {
+                Ok(Some(prepared)) => {
+                    self.launcher_status = format!("Лаунчер {} готов к запуску", prepared.version);
+                    self.launcher_ready = Some(prepared);
+                }
+                Ok(None) => {
+                    self.launcher_status =
+                        format!("Лаунчер {} · проверка завершена", env!("CARGO_PKG_VERSION"))
+                }
+                Err(error) => {
+                    self.launcher_status =
+                        "Обновление лаунчера отложено; текущая версия работает".into();
+                    self.activity.push(error);
+                }
+            }
+        }
+        if let Some(handoff) = &mut self.launcher_handoff {
+            match handoff.poll() {
+                Ok(true) => {
+                    self.launcher_handoff = None;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    handoff.cancel();
+                    self.launcher_handoff = None;
+                    self.launcher_status = format!("{error:#}");
+                }
+            }
+        } else if self.config.auto_update_launcher
+            && !self.busy()
+            && self.child.is_none()
+            && !self.settings
+            && self.reports.can_restart()
+            && let Some(prepared) = self.launcher_ready.take()
+        {
+            self.save();
+            match prepared.start(&self.root) {
+                Ok(handoff) => {
+                    self.launcher_status = "Открывается новая версия лаунчера…".into();
+                    self.launcher_handoff = Some(handoff);
+                }
+                Err(error) => self.launcher_status = format!("{error:#}"),
+            }
+        }
+        if self.config.auto_update_launcher && Instant::now() >= self.next_launcher_check {
+            self.check_launcher(ctx);
+        }
     }
 
     fn busy(&self) -> bool {
@@ -120,6 +229,7 @@ impl Launcher {
         if self.busy() {
             return;
         }
+        self.next_check = Instant::now() + CHECK_INTERVAL;
         self.available = None;
         self.error = None;
         self.status = "Проверка обновлений…".into();
@@ -166,6 +276,16 @@ impl Launcher {
         let cancel = self.cancel.clone();
         let root = self.root.clone();
         self.status = "Загрузка и проверка файлов…".into();
+        self.download_started = Some(Instant::now());
+        self.progress = Some(Progress {
+            file: "Подключение к серверу…".into(),
+            downloaded: 0,
+            total: available
+                .release
+                .files_for(&opensc_launcher::platform())
+                .map(|f| f.size)
+                .sum(),
+        });
         let (tx, rx) = mpsc::channel();
         self.receiver = Some(rx);
         let ctx = ctx.clone();
@@ -210,22 +330,17 @@ impl Launcher {
             }
             self.receiver = None;
             self.progress = None;
+            self.download_started = None;
             match event {
                 Event::Checked(Ok(Some(available))) => {
-                    self.status = if updater::supported(&available) {
+                    self.status = if !updater::supported(&available) {
+                        "Для этой системы сборка ещё не опубликована".into()
+                    } else if self.needs_update(&available) {
                         format!("Доступна версия {}", available.release.version)
                     } else {
-                        "Для этой системы сборка ещё не опубликована".into()
+                        "Установлена последняя версия. Можно играть".into()
                     };
-                    let needs_update = updater::supported(&available)
-                        && self.installed.as_ref().is_none_or(|installed| {
-                            installed.release.fingerprint().ok()
-                                != available.release.fingerprint().ok()
-                        });
                     self.available = Some(available);
-                    if needs_update && self.config.auto_update && self.child.is_none() {
-                        self.install(ctx);
-                    }
                 }
                 Event::Checked(Ok(None)) => {
                     self.status = "Сервер доступен. Движок ещё не опубликован".into()
@@ -241,10 +356,21 @@ impl Launcher {
                 Event::Verified(Ok(())) => self.status = "Все файлы прошли проверку SHA-256".into(),
                 Event::Checked(Err(error))
                 | Event::Inspected(Err(error))
-                | Event::Installed(Err(error))
                 | Event::Verified(Err(error)) => {
                     self.status = "Не удалось завершить операцию".into();
                     self.error = Some(error);
+                }
+                Event::Installed(Err(error)) => {
+                    self.blocked_update = self
+                        .available
+                        .as_ref()
+                        .and_then(|a| a.release.fingerprint().ok());
+                    if self.cancel.load(Ordering::Relaxed) {
+                        self.status = "Загрузка остановлена. Можно начать её заново".into();
+                    } else {
+                        self.status = "Загрузка прервана. Нажми «Повторить»".into();
+                        self.error = Some(error);
+                    }
                 }
                 Event::Progress(_) => unreachable!(),
             }
@@ -254,17 +380,14 @@ impl Launcher {
                 self.activity.remove(0);
             }
         }
-        if self.inventory.is_none()
-            && !self.busy()
-            && self.inspected_path.as_deref() != Some(self.config.data_path.as_str())
-            && !self.config.data_path.trim().is_empty()
-        {
-            self.inspect(ctx);
-        }
         if let Some(child) = self.child.as_mut() {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     self.activity.push(format!("Движок завершился: {status}"));
+                    if !status.success() {
+                        self.reports
+                            .crash(&self.root, &self.config, self.installed.as_ref());
+                    }
                     self.child = None;
                 }
                 Err(e) => {
@@ -274,6 +397,41 @@ impl Launcher {
                 _ => {}
             }
         }
+        self.auto_install(ctx);
+        if self.inventory.is_none()
+            && !self.busy()
+            && self.inspected_path.as_deref() != Some(self.config.data_path.as_str())
+            && !self.config.data_path.trim().is_empty()
+        {
+            self.inspect(ctx);
+        }
+    }
+
+    fn needs_update(&self, available: &Available) -> bool {
+        updater::supported(available)
+            && self.installed.as_ref().is_none_or(|installed| {
+                installed.release.fingerprint().ok() != available.release.fingerprint().ok()
+            })
+    }
+
+    fn auto_install(&mut self, ctx: &egui::Context) {
+        if !self.busy()
+            && self.child.is_none()
+            && self.config.auto_update
+            && self.available.as_ref().is_some_and(|available| {
+                self.needs_update(available)
+                    && self.blocked_update != available.release.fingerprint().ok()
+            })
+        {
+            self.install(ctx);
+        }
+    }
+
+    fn tick(&mut self, ctx: &egui::Context) {
+        self.receive(ctx);
+        if !self.busy() && Instant::now() >= self.next_check {
+            self.check(ctx);
+        }
     }
 
     fn resource_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -281,8 +439,10 @@ impl Launcher {
             eyebrow(ui, "02 / РЕСУРСЫ ИГРЫ");
             ui.label(RichText::new("Папка оригинальной Shadow Company").size(19.0));
             ui.label(
-                RichText::new("Выбери папку Data или используй ресурсы из установленной сборки.")
-                    .color(MUTED),
+                RichText::new(
+                    "Укажи папку Data из своей копии игры. Выбор сохраняется при обновлениях.",
+                )
+                .color(MUTED),
             );
             ui.add_space(2.0);
             ui.horizontal(|ui| {
@@ -353,69 +513,195 @@ impl Launcher {
         });
     }
 
-    fn hero(&self, ui: &mut egui::Ui) {
-        let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 192.0), egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0, PANEL);
+    fn background(&self, ui: &egui::Ui) {
+        let rect = ui.max_rect();
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0, BACKGROUND);
         if let Some(texture) = &self.hero {
-            let uv_height = ((16.0_f32 / 9.0) / rect.aspect_ratio()).min(1.0);
-            let uv = egui::Rect::from_min_max(
-                egui::pos2(0.0, (1.0 - uv_height) * 0.5),
-                egui::pos2(1.0, (1.0 + uv_height) * 0.5),
-            );
-            painter.image(texture.id(), rect, uv, Color32::from_white_alpha(180));
+            let source = texture.size_vec2().x / texture.size_vec2().y;
+            let aspect = rect.aspect_ratio();
+            let (w, h) = if aspect > source {
+                (1.0, source / aspect)
+            } else {
+                (aspect / source, 1.0)
+            };
+            let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(w, h));
+            painter.image(texture.id(), rect, uv, Color32::WHITE);
         }
-        let split = rect.left() + rect.width() * 0.4;
-        painter.rect_filled(
-            egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom())),
-            0,
-            Color32::from_rgb(18, 25, 20),
-        );
         let mut fade = egui::Mesh::default();
-        let left = Color32::from_rgb(18, 25, 20);
-        let right = Color32::from_black_alpha(35);
-        fade.colored_vertex(egui::pos2(split, rect.top()), left);
-        fade.colored_vertex(rect.right_top(), right);
-        fade.colored_vertex(egui::pos2(split, rect.bottom()), left);
-        fade.colored_vertex(rect.right_bottom(), right);
+        fade.colored_vertex(rect.left_top(), Color32::from_black_alpha(200));
+        fade.colored_vertex(rect.right_top(), Color32::from_black_alpha(65));
+        fade.colored_vertex(rect.left_bottom(), Color32::from_black_alpha(235));
+        fade.colored_vertex(rect.right_bottom(), Color32::from_black_alpha(180));
         fade.indices.extend_from_slice(&[0, 1, 2, 1, 3, 2]);
         painter.add(egui::Shape::mesh(fade));
-        painter.rect_stroke(
-            rect,
-            0,
-            Stroke::new(1.0_f32, Color32::from_rgb(61, 71, 50)),
-            egui::StrokeKind::Inside,
-        );
-        let at = |x, y| rect.min + Vec2::new(x, y);
-        painter.text(
-            at(24.0, 22.0),
-            egui::Align2::LEFT_TOP,
-            "OPEN SHADOW COMPANY",
-            FontId::monospace(10.0),
-            ACCENT,
-        );
-        painter.text(
-            at(22.0, 48.0),
-            egui::Align2::LEFT_TOP,
-            "Вернуться в строй.",
-            FontId::proportional(40.0),
-            Color32::from_rgb(243, 239, 222),
-        );
-        painter.text(
-            at(24.0, 103.0),
-            egui::Align2::LEFT_TOP,
-            "Shadow Company: Left for Dead",
-            FontId::proportional(15.0),
-            MUTED,
-        );
-        painter.text(
-            at(24.0, 151.0),
-            egui::Align2::LEFT_TOP,
-            "РЕСУРСЫ ОРИГИНАЛА  /  НОВЫЙ ДВИЖОК",
-            FontId::monospace(10.0),
-            ACCENT,
-        );
+    }
+
+    fn launch(&mut self) {
+        let Some(data) = self.data_path() else {
+            self.settings = true;
+            return;
+        };
+        self.save();
+        if let Some(installed) = &self.installed {
+            match installed.launch(&self.root, &data) {
+                Ok(child) => {
+                    self.child = Some(child);
+                    self.status = "Игра запущена".into();
+                }
+                Err(error) => self.error = Some(format!("{error:#}")),
+            }
+        }
+    }
+
+    fn download_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let width = ui.available_width();
+        let button_width = 220.0;
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui(Vec2::new(width - button_width - 24.0, 94.0), |ui| {
+                ui.horizontal(|ui| {
+                    if self.busy() {
+                        ui.spinner();
+                    }
+                    ui.label(RichText::new(&self.status).size(16.0).strong());
+                });
+                if let Some(progress) = &self.progress {
+                    let fraction = if progress.total > 0 {
+                        progress.downloaded as f32 / progress.total as f32
+                    } else {
+                        0.0
+                    };
+                    let speed = self
+                        .download_started
+                        .map(|at| progress.downloaded as f64 / at.elapsed().as_secs_f64().max(0.1))
+                        .unwrap_or(0.0);
+                    ui.add(
+                        egui::ProgressBar::new(fraction)
+                            .fill(ACCENT)
+                            .desired_height(8.0),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{} / {}  ·  {}/с  ·  {:.0}%",
+                            bytes(progress.downloaded),
+                            bytes(progress.total),
+                            bytes(speed as u64),
+                            fraction * 100.0
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+                    if ui.small_button("Остановить загрузку").clicked() {
+                        self.cancel.store(true, Ordering::Relaxed);
+                        self.blocked_update = self
+                            .available
+                            .as_ref()
+                            .and_then(|a| a.release.fingerprint().ok());
+                    }
+                } else {
+                    let version = self
+                        .installed
+                        .as_ref()
+                        .map(|i| i.release.version.as_str())
+                        .unwrap_or("не установлена");
+                    ui.label(
+                        RichText::new(format!(
+                            "Версия игры: {version}  ·  {}",
+                            opensc_launcher::platform()
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !self.busy(),
+                                egui::Button::new("Проверить обновления").small(),
+                            )
+                            .clicked()
+                        {
+                            self.check(ctx);
+                            self.next_launcher_check = Instant::now();
+                        }
+                        if ui.small_button("Папка игры и настройки").clicked() {
+                            self.settings = true;
+                        }
+                    });
+                }
+                if let Some(error) = &self.error {
+                    egui::ScrollArea::vertical()
+                        .max_height(48.0)
+                        .show(ui, |ui| {
+                            ui.colored_label(Color32::from_rgb(245, 154, 126), error);
+                        });
+                }
+            });
+            ui.vertical(|ui| {
+                let update = self
+                    .available
+                    .as_ref()
+                    .is_some_and(|a| self.needs_update(a));
+                let text = if self.child.is_some() {
+                    "ИГРА ЗАПУЩЕНА"
+                } else if self.busy() {
+                    if self.progress.is_some() {
+                        "ЗАГРУЗКА…"
+                    } else {
+                        "ПРОВЕРКА…"
+                    }
+                } else if update {
+                    if self.blocked_update.is_some() {
+                        if self.error.is_some() {
+                            "ПОВТОРИТЬ"
+                        } else {
+                            "ЗАГРУЗИТЬ"
+                        }
+                    } else {
+                        "ОБНОВИТЬ"
+                    }
+                } else if self.installed.is_none() {
+                    "СКАЧАТЬ ИГРУ"
+                } else if self.data_path().is_none() {
+                    "ВЫБРАТЬ DATA"
+                } else {
+                    "ИГРАТЬ"
+                };
+                let can_click =
+                    !self.busy() && self.child.is_none() && (self.installed.is_some() || update);
+                if ui
+                    .add_enabled(
+                        can_click,
+                        egui::Button::new(
+                            RichText::new(text)
+                                .size(21.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(PLAY)
+                        .corner_radius(2)
+                        .min_size(Vec2::new(button_width, 62.0)),
+                    )
+                    .clicked()
+                {
+                    if update {
+                        self.blocked_update = None;
+                        self.install(ctx);
+                    } else {
+                        self.launch();
+                    }
+                }
+                ui.label(
+                    RichText::new(if self.config.auto_update {
+                        "Обновления загружаются автоматически"
+                    } else {
+                        "Автозагрузка выключена в настройках"
+                    })
+                    .size(10.0)
+                    .color(MUTED),
+                );
+            });
+        });
+        ui.label(RichText::new(&self.launcher_status).size(10.0).color(MUTED));
     }
 }
 
@@ -438,216 +724,94 @@ impl Launcher {
 
 impl eframe::App for Launcher {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.receive(ctx);
-        if self.busy() || self.child.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(200));
-        }
+        self.tick(ctx);
+        self.poll_launcher(ctx);
+        ctx.request_repaint_after(Duration::from_millis(if self.busy() { 100 } else { 500 }));
         egui::TopBottomPanel::top("header")
             .frame(
                 egui::Frame::new()
                     .fill(BACKGROUND)
-                    .inner_margin(egui::Margin::symmetric(24, 14)),
+                    .inner_margin(egui::Margin::symmetric(28, 15)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let (mark, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
-                    let painter = ui.painter();
-                    painter.rect_stroke(
-                        mark.shrink(4.0),
-                        0,
-                        Stroke::new(1.0_f32, ACCENT),
-                        egui::StrokeKind::Inside,
-                    );
-                    painter.line_segment(
-                        [mark.left_center(), mark.right_center()],
-                        Stroke::new(1.0_f32, ACCENT),
-                    );
-                    painter.line_segment(
-                        [mark.center_top(), mark.center_bottom()],
-                        Stroke::new(1.0_f32, ACCENT),
-                    );
-                    ui.label(RichText::new("OpenSC").size(23.0).strong());
-                    ui.add_space(10.0);
+                    ui.label(RichText::new("OpenSC").size(27.0).strong());
+                    ui.add_space(18.0);
                     ui.label(
-                        RichText::new("ПОДГОТОВКА К ЗАПУСКУ")
-                            .monospace()
-                            .size(10.0)
-                            .color(MUTED),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "ТЕСТОВЫЙ ВЫПУСК  {}",
-                                env!("CARGO_PKG_VERSION")
-                            ))
+                        RichText::new("SHADOW COMPANY: LEFT FOR DEAD")
                             .monospace()
                             .size(10.0)
                             .color(ACCENT),
-                        );
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("НАСТРОЙКИ").clicked() {
+                            self.settings = !self.settings;
+                        }
+                        if ui.button("СООБЩИТЬ ОБ ОШИБКЕ").clicked() {
+                            self.reports.open = true;
+                        }
+                        ui.hyperlink_to("САЙТ ПРОЕКТА", "https://shadow-test.zaikinagroup.ru/");
                     });
                 });
             });
-        egui::TopBottomPanel::bottom("footer")
+        egui::TopBottomPanel::bottom("download")
             .frame(
                 egui::Frame::new()
                     .fill(PANEL)
-                    .inner_margin(egui::Margin::symmetric(24, 10)),
+                    .inner_margin(egui::Margin::symmetric(28, 18)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("ЛАУНЧЕР {}", env!("CARGO_PKG_VERSION")))
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.separator();
-                    ui.label(
-                        RichText::new(opensc_launcher::platform())
-                            .small()
-                            .color(MUTED),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.link("Настройки").clicked() {
-                            self.settings = !self.settings;
-                        }
-                        ui.hyperlink_to("Сайт проекта", "https://shadow-test.zaikinagroup.ru/");
-                    });
-                });
+                self.download_panel(ui, ctx);
             });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(24))
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.hero(ui);
-                    ui.add_space(10.0);
-                    card(ui, |ui| {
-                        eyebrow(ui, "01 / ДВИЖОК");
-                        let title = self
-                            .installed
-                            .as_ref()
-                            .map(|i| format!("Установлена версия {}", i.release.version))
-                            .unwrap_or_else(|| "Движок ещё не подключён".into());
-                        ui.label(RichText::new(title).size(22.0).strong());
-                        if self.installed.is_none() {
-                            ui.label(
-                                RichText::new(
-                                    "Установи доступную сборку и выбери папку оригинальной игры.",
-                                )
-                                .color(MUTED),
-                            );
-                        }
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            let can_launch = !self.busy()
-                                && self.installed.is_some()
-                                && self.data_path().is_some()
-                                && self.child.is_none();
-                            if ui
-                                .add_enabled(
-                                    can_launch,
-                                    egui::Button::new(
-                                        RichText::new(if self.child.is_some() {
-                                            "Игра запущена"
-                                        } else {
-                                            "Запустить игру"
-                                        })
-                                        .strong()
-                                        .color(Color32::from_rgb(20, 27, 21)),
-                                    )
-                                    .fill(ACCENT),
-                                )
-                                .clicked()
-                            {
-                                self.save();
-                                match self
-                                    .installed
-                                    .as_ref()
-                                    .unwrap()
-                                    .launch(&self.root, &self.data_path().unwrap())
-                                {
-                                    Ok(child) => {
-                                        self.child = Some(child);
-                                        self.status = "Движок запущен".into();
-                                    }
-                                    Err(error) => self.error = Some(format!("{error:#}")),
-                                }
-                            }
-                            let can_install = !self.busy()
-                                && self.available.as_ref().is_some_and(updater::supported);
-                            if ui
-                                .add_enabled(
-                                    can_install,
-                                    egui::Button::new("Установить / обновить"),
-                                )
-                                .clicked()
-                            {
-                                self.install(ctx);
-                            }
-                            if ui
-                                .add_enabled(
-                                    !self.busy(),
-                                    egui::Button::new("Проверить обновления"),
-                                )
-                                .clicked()
-                            {
-                                self.check(ctx);
-                            }
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(BACKGROUND)).show(ctx, |ui| {
+            self.background(ui);
+            let rect = ui.max_rect().shrink2(Vec2::new(32.0, 26.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let side = if rect.width() > 1050.0 { 310.0 } else { 265.0 };
+                let left = rect.width() - side - 40.0;
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui(Vec2::new(left, rect.height()), |ui| {
+                        ui.add_space((rect.height() * 0.15).clamp(20.0, 80.0));
+                        eyebrow(ui, "OPEN SHADOW COMPANY");
+                        ui.add_space(12.0);
+                        ui.label(RichText::new("ВЕРНУТЬСЯ\nВ СТРОЙ.").size(if left > 550.0 { 64.0 } else { 50.0 }).strong().color(Color32::from_rgb(244, 239, 223)));
+                        ui.add_space(14.0);
+                        ui.label(RichText::new("Новый движок. Знакомые операции.").size(21.0).color(ACCENT));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Меню, видео и обучение на ресурсах вашей копии Shadow Company: Left for Dead.").size(15.0).color(Color32::from_rgb(203, 207, 194)));
+                        ui.add_space(18.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("RUST / BEVY").monospace().size(10.0).color(MUTED));
+                            ui.separator();
+                            ui.label(RichText::new("WINDOWS · LINUX · macOS").monospace().size(10.0).color(MUTED));
                         });
-                        if let Some(available) = &self.available {
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(format!(
-                                    "Доступная версия: {}",
-                                    available.release.version
-                                ))
-                                .color(ACCENT),
-                            );
-                            ui.label(&available.release.notes);
-                        }
                     });
-                    ui.add_space(6.0);
-                    self.resource_card(ui, ctx);
-                    ui.add_space(6.0);
-                    card(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            if self.busy() {
-                                ui.spinner();
-                            }
-                            ui.label(RichText::new(&self.status).color(ACCENT));
-                        });
-                        if let Some(progress) = &self.progress {
-                            let fraction = if progress.total > 0 {
-                                progress.downloaded as f32 / progress.total as f32
-                            } else {
-                                1.0
-                            };
-                            ui.add(egui::ProgressBar::new(fraction).text(format!(
-                                "{} / {}",
-                                bytes(progress.downloaded),
-                                bytes(progress.total)
-                            )));
-                            ui.label(RichText::new(&progress.file).small().color(MUTED));
-                            if ui.small_button("Отменить установку").clicked() {
-                                self.cancel.store(true, Ordering::Relaxed);
-                            }
-                        }
-                        if let Some(error) = &self.error {
-                            ui.colored_label(Color32::from_rgb(240, 144, 127), error);
-                        }
-                        egui::CollapsingHeader::new("Журнал действий").show(ui, |ui| {
-                            for line in self.activity.iter().rev().take(8) {
-                                ui.label(RichText::new(line).small().color(MUTED));
-                            }
+                    ui.add_space(20.0);
+                    ui.allocate_ui(Vec2::new(side, rect.height()), |ui| {
+                        egui::ScrollArea::vertical().id_salt("news").show(ui, |ui| {
+                            eyebrow(ui, "ОБНОВЛЕНИЯ ПРОЕКТА");
+                            ui.add_space(8.0);
+                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", "Меню и русский / English", self.available.as_ref().map(|a| a.release.notes.as_str()).unwrap_or("Новое главное меню, анимация кнопок, современные шрифты и переключение языка интерфейса."));
+                            ui.add_space(10.0);
+                            news_card(ui, "НАЧАЛО ИГРЫ", "Ваша копия Shadow Company", "Один раз выберите папку Data в настройках. Лаунчер запомнит путь и установит обновления движка.");
+                            ui.add_space(10.0);
+                            news_card(ui, "ТЕСТОВЫЙ ПРОЕКТ", "Возвращение на учебную карту", "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
                         });
                     });
                 });
             });
+        });
+        self.reports
+            .show(ctx, &self.root, &self.config, self.installed.as_ref());
         if self.settings {
             let mut open = true;
             egui::Window::new("Настройки лаунчера")
                 .open(&mut open)
-                .default_width(660.0)
+                .default_width(700.0)
+                .vscroll(true)
                 .show(ctx, |ui| {
+                    self.resource_card(ui, ctx);
+                    ui.add_space(14.0);
                     ui.label("Адрес манифеста обновлений");
                     ui.add_enabled(
                         !self.busy(),
@@ -666,12 +830,15 @@ impl eframe::App for Launcher {
                             "Обновлять игру при запуске лаунчера",
                         );
                     });
+                    ui.checkbox(&mut self.config.auto_update_launcher,"Автоматически обновлять сам лаунчер (подписанные выпуски)");
+                    ui.label(RichText::new(&self.launcher_status).small().color(MUTED));
                     ui.label("Улучшенные ресурсы (пусто — папка overrides в OpenSC)");
                     ui.add_enabled(
                         !self.busy() && self.child.is_none(),
                         egui::TextEdit::singleline(&mut self.config.overrides_path)
                             .desired_width(f32::INFINITY),
                     );
+                    ui.label(RichText::new("Проверка при открытии и каждые 60 секунд. Во время игры установка откладывается до её завершения.").small().color(MUTED));
                     ui.label("Папка установок и журналов");
                     ui.label(
                         RichText::new(self.root.display().to_string())
@@ -679,8 +846,9 @@ impl eframe::App for Launcher {
                             .small(),
                     );
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить").clicked() {
-                            self.save();
+                        if ui.button("Сохранить и проверить").clicked() {
+                            self.save(); self.next_check = Instant::now();
+                            self.next_launcher_check = Instant::now();
                         }
                         if ui
                             .add_enabled(
@@ -692,12 +860,20 @@ impl eframe::App for Launcher {
                             self.verify(ctx);
                         }
                     });
+                    ui.separator();
+                    ui.label(RichText::new(format!("Лаунчер {}", env!("CARGO_PKG_VERSION"))).small().color(MUTED));
+                    egui::CollapsingHeader::new("Журнал действий").show(ui, |ui| {
+                        for line in self.activity.iter().rev().take(12) { ui.label(line); }
+                    });
                 });
             self.settings = open;
         }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(handoff) = &mut self.launcher_handoff {
+            handoff.cancel();
+        }
         self.cancel.store(true, Ordering::Relaxed);
         self.save();
     }
@@ -728,3 +904,24 @@ fn bytes(value: u64) -> String {
         format!("{:.1} КБ", value as f64 / 1024.0)
     }
 }
+
+fn news_card(ui: &mut egui::Ui, tag: &str, title: &str, body: &str) {
+    egui::Frame::new()
+        .fill(Color32::from_black_alpha(185))
+        .stroke(Stroke::new(1.0_f32, Color32::from_white_alpha(40)))
+        .inner_margin(16)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            eyebrow(ui, tag);
+            ui.label(RichText::new(title).size(18.0).strong());
+            ui.label(
+                RichText::new(body)
+                    .size(13.0)
+                    .color(Color32::from_rgb(190, 198, 185)),
+            );
+        });
+}
+
+#[cfg(test)]
+#[path = "ui_tests.rs"]
+mod tests;

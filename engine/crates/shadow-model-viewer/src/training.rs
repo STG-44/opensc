@@ -130,6 +130,11 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
+    let carry = if let (Some(p), Some(c)) = (&mut actor, &mut combat) {
+        Some(crate::body_carry::Carry::prepare(&catalog, p, c)?)
+    } else {
+        None
+    };
     let mut vehicle = actor
         .as_ref()
         .map(|_| crate::vehicle::Vehicle::prepare(&catalog, &scene))
@@ -468,7 +473,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                         crate::evacuation::input,
                     )
                         .chain(),
-                    inventory::input
+                    (crate::body_carry::input, inventory::input)
+                        .chain()
                         .run_if(crate::vehicle::on_foot_or_reset)
                         .run_if(crate::party::john_controls),
                     crate::party::input,
@@ -506,7 +512,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     (crate::gate::tick, crate::vehicle::tick).chain(),
                     pickup::sync,
                     combat::traces,
-                    combat::sync,
+                    (crate::body_carry::tick, combat::sync).chain(),
                     inventory::sync,
                     grenade::sync,
                     fence::sync,
@@ -523,7 +529,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     )
                         .chain(),
                     tutorial::ui,
-                    inventory::ui,
+                    (inventory::ui, crate::body_carry::ui).chain(),
                     pickup::ring,
                     update_markers,
                     (
@@ -568,6 +574,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     }
     if let Some(m) = medical {
         app.insert_resource(m);
+    }
+    if let Some(carry) = carry {
+        app.insert_resource(carry);
     }
     if let Some(actor) = actor {
         app.insert_resource(actor);
@@ -1331,6 +1340,29 @@ pub(crate) fn issue_orders(
         history.0 = None;
         return;
     }
+    if player.carry_movement.is_some() {
+        if mouse.just_pressed(MouseButton::Left)
+            && let Some(cursor) = cursor
+        {
+            if actor_clicked(camera, transform, cursor, &player) {
+                player.selected = true;
+            } else if player.selected
+                && let Some(grid) = &preview.grid
+                && let Ok(ray) = camera.viewport_to_world(transform, cursor)
+                && let Some(point) = orders::terrain_hit(grid, ray.origin, ray.direction.as_vec3())
+            {
+                let running = history.register(time.elapsed_secs_f64(), cursor);
+                if let Some(party) = &mut party {
+                    party.order_group(&player, point, running, grid);
+                }
+                player.order(grid, point, running);
+            }
+        } else if mouse.just_pressed(MouseButton::Right) {
+            player.selected = false;
+            player.follow_camera = false;
+        }
+        return;
+    }
     if mouse.just_pressed(MouseButton::Left)
         && player.selected
         && !player.playback.paused
@@ -2024,6 +2056,7 @@ pub(crate) struct Session {
     hud: crate::hud::Hud,
     evacuation: crate::evacuation::Evacuation,
     tutorial: tutorial::Tutorial,
+    carry: crate::body_carry::Carry,
 }
 #[allow(dead_code)] // Интерфейс используется бинарником shadow-game.
 pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn Error>> {
@@ -2035,7 +2068,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
         player::initial_actor(&mission, &scene.actors)?,
     )?;
     let item = pickup::Pickup::prepare(catalog, &scene, &mut actor)?;
-    let combat = combat::Combat::prepare(catalog, &scene, &mission, &mut actor)?;
+    let mut combat = combat::Combat::prepare(catalog, &scene, &mission, &mut actor)?;
     let mut inventory = inventory::Inventory::prepare(catalog, &mut actor)?;
     let grenade = grenade::Grenade::prepare(catalog, &mut actor)?;
     let fence = fence::Fence::prepare(catalog, &scene, &mut actor, &mut inventory)?;
@@ -2043,6 +2076,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
     let uzi = crate::smg::Uzi::prepare(catalog, &scene, &inventory)?;
     let medical = crate::medical::Medical::prepare(catalog, &scene, &mut actor)?;
     let armor = crate::armor::Armor::prepare(catalog, &scene, &mut actor)?;
+    let carry = crate::body_carry::Carry::prepare(catalog, &mut actor, &mut combat)?;
     let mut party = crate::party::Party::prepare(catalog, &scene, &mission)?;
     let roster = crate::roster::Roster::prepare(catalog, &actor, &party.jack)?;
     let hud = crate::hud::Hud::prepare(catalog)?;
@@ -2082,6 +2116,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
         hud,
         evacuation,
         tutorial,
+        carry,
     })
 }
 fn training_definition(catalog: &AssetCatalog) -> Result<MissionDefinition, Box<dyn Error>> {
@@ -2111,6 +2146,7 @@ impl Session {
         commands.insert_resource(crate::selection::Selection::default());
         commands.insert_resource(self.evacuation);
         commands.insert_resource(self.tutorial);
+        commands.insert_resource(self.carry);
         commands.insert_resource(orders::ClickHistory::default());
         commands.insert_resource(IntegratedSession);
         commands.insert_resource(SessionReady);
@@ -2131,6 +2167,7 @@ pub(crate) fn cleanup(mut commands: Commands, roots: Query<Entity, With<player::
     commands.remove_resource::<pickup::Pickup>();
     commands.remove_resource::<combat::Combat>();
     commands.remove_resource::<inventory::Inventory>();
+    commands.remove_resource::<crate::body_carry::Carry>();
     commands.remove_resource::<grenade::Grenade>();
     commands.remove_resource::<fence::Fence>();
     commands.remove_resource::<crate::smg::Uzi>();

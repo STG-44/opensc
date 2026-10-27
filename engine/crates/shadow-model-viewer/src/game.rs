@@ -1,6 +1,7 @@
 //! Главный экран и обучение живут в одном Bevy App и одном окне.
 mod armor;
 mod asset_mesh;
+mod body_carry;
 mod combat;
 mod evacuation;
 mod fence;

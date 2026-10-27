@@ -20,6 +20,7 @@ const DAMAGE: f32 = 40.0;
 pub struct Combat {
     pub guard: player::Player,
     pub health: f32,
+    pub carried: bool,
     pub maximum: f32,
     pub ordered: bool,
     pub hits: u32,
@@ -45,7 +46,7 @@ pub struct Combat {
 #[derive(Component)]
 pub struct GuardBone(usize, usize);
 #[derive(Component)]
-pub struct GuardRoot;
+pub struct GuardRoot(pub usize);
 #[derive(Component)]
 pub struct GuardRing(usize);
 #[derive(Component)]
@@ -342,6 +343,7 @@ impl Combat {
             "enemy_ai_implemented":false,"navigation":false,"loot_inventory_implemented":equipped});
         Ok(Self {
             guard,
+            carried: false,
             health: maximum,
             maximum,
             ordered: false,
@@ -423,6 +425,7 @@ impl Combat {
         self.health = self.maximum;
         self.hits = 0;
         self.death_seconds = None;
+        self.carried = false;
         self.guard.playback.select(&self.guard.clips, 0);
         self.guard.playback.reset(&self.guard.clips);
     }
@@ -458,6 +461,9 @@ impl Combat {
             || !dt.is_finite()
             || dt < 0.0
         {
+            return;
+        }
+        if self.carried {
             return;
         }
         if let Some(seconds) = self.death_seconds {
@@ -553,7 +559,7 @@ impl Combat {
     }
     pub fn report(&self) -> serde_json::Value {
         serde_json::json!({"name":self.guard.name,"position_metres":self.guard.position.to_array(),"heading_radians":self.guard.heading,
-            "health":self.health,"alive":self.alive(),"ordered":self.ordered,"hits":self.hits,"death_seconds":self.death_seconds,
+            "health":self.health,"carried":self.carried,"alive":self.alive(),"ordered":self.ordered,"hits":self.hits,"death_seconds":self.death_seconds,
             "motion":self.guard.clips[self.guard.playback.selected].name,"source":self.source,"second":self.second.as_ref().map(|s|s.report()),"third":self.third.as_ref().map(|s|s.report()),"smg_guards":self.smg.iter().map(|g|g.report()).collect::<Vec<_>>(),"smg_group_complete":self.smg_completed,"gun_order_target":self.fire.as_ref().map(|f|f.target),"message":self.message})
     }
 }
@@ -619,7 +625,7 @@ fn spawn_guard(
     let root = commands
         .spawn((
             player::SceneEntity,
-            GuardRoot,
+            GuardRoot(owner),
             Name::new(combat.guard.display_name.clone()),
             combat.guard.transform(),
             Visibility::default(),
@@ -712,7 +718,8 @@ pub fn sync(
     item: Option<Res<Pickup>>,
     inventory: Option<ResMut<Inventory>>,
     time: Res<Time>,
-    mut bones: Query<(&GuardBone, &mut Transform)>,
+    mut bones: Query<(&GuardBone, &mut Transform), Without<GuardRoot>>,
+    mut roots: Query<(&GuardRoot, &mut Transform), Without<GuardBone>>,
     mut rings: Query<(&GuardRing, &mut Visibility), Without<GuardWeapon>>,
     mut weapons: Query<(&GuardWeapon, &mut Visibility), Without<GuardRing>>,
     equipment: Query<(&crate::pickup::EquippedPart, &GlobalTransform)>,
@@ -726,6 +733,9 @@ pub fn sync(
     };
     c.update_with_inventory(&mut p, &mut t, &item, &mut inv, time.delta_secs());
     inv.observe(&item, &c);
+    for (root, mut transform) in &mut roots {
+        *transform = c.guard_at(root.0).guard.transform();
+    }
     for (b, mut transform) in &mut bones {
         *transform = c.guard_at(b.0).guard.playback.pose.bones[b.1];
     }
@@ -866,6 +876,9 @@ impl Combat {
         p: &mut player::Player,
         grid: &shadow_formats::TerrainGrid,
     ) -> bool {
+        if p.carry_movement.is_some() {
+            return false;
+        }
         if index >= self.guard_count() || !self.guard_at(index).alive() || p.playback.paused {
             return false;
         }
@@ -1062,6 +1075,7 @@ pub(crate) mod tests {
         });
         let c = Combat {
             guard,
+            carried: false,
             health: 75.0,
             maximum: 75.0,
             ordered: false,

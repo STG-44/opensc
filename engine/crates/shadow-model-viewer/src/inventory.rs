@@ -656,6 +656,11 @@ pub fn input(
         keys.reset(KeyCode::Escape);
         return;
     }
+    if actor.carry_movement.is_some() {
+        inv.drag = None;
+        inv.consumed_input = true;
+        return;
+    }
     if inv.drag.is_some()
         && !mouse.pressed(MouseButton::Left)
         && !mouse.just_released(MouseButton::Left)

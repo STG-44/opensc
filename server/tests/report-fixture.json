@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "request_id": "cccccccccccccccccccccccccccccccc",
+  "category": "other",
+  "title": "[CI] Report service smoke test",
+  "steps": "Build static server, submit a report, inspect storage and backup.",
+  "expected": "One private ticket and a receipt.",
+  "actual": "Synthetic CI fixture.",
+  "diagnostics": {
+    "launcher_version": "0.4.0",
+    "engine_version": "ci-fixture",
+    "source_sha256": "",
+    "platform": "linux-x86_64",
+    "os": "CI",
+    "graphics": "",
+    "log_excerpt": ""
+  }
+}

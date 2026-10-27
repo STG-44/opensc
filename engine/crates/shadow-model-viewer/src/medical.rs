@@ -416,6 +416,9 @@ pub fn input(
     let (Some(mut m), Some(mut p), Some(mut inv)) = (medical, p, inv) else {
         return;
     };
+    if p.carry_movement.is_some() {
+        return;
+    }
     if t.is_some_and(|t| t.active.is_some() || t.consumed_input) {
         return;
     }

@@ -16,6 +16,8 @@ use bevy::{
 use shadow_formats::{AssetCatalog, MenuLayout};
 use std::{collections::HashSet, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
+#[path = "input_smoke.rs"]
+mod input_smoke;
 #[path = "localization_smoke.rs"]
 mod locale_smoke;
 #[path = "menu_pages.rs"]
@@ -187,6 +189,7 @@ struct Config {
     options_tab: usize,
     campaign_tab: usize,
     locale_smoke: Option<PathBuf>,
+    input_smoke: Option<PathBuf>,
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
@@ -378,7 +381,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     )
     .add_systems(
         Update,
-        crate::inventory::input
+        (crate::body_carry::input, crate::inventory::input)
+            .chain()
             .run_if(crate::vehicle::on_foot_or_reset)
             .run_if(crate::party::john_controls)
             .run_if(in_state(Screen::Training))
@@ -415,7 +419,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             (crate::gate::tick, crate::vehicle::tick).chain(),
             crate::pickup::sync,
             crate::combat::traces,
-            crate::combat::sync,
+            (crate::body_carry::tick, crate::combat::sync).chain(),
             crate::inventory::sync,
             crate::grenade::sync,
             crate::fence::sync,
@@ -432,7 +436,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             )
                 .chain(),
             crate::tutorial::ui,
-            crate::inventory::ui,
+            (crate::inventory::ui, crate::body_carry::ui).chain(),
             crate::pickup::ring,
             training::update_markers,
             (
@@ -467,6 +471,10 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     .after(suppress_captured_input),
             )
             .add_systems(Update, evacuation_smoke_result.after(training_finished));
+    }
+    if let Some(path) = config.input_smoke {
+        app.insert_resource(input_smoke::Smoke::new(path))
+            .add_systems(Last, input_smoke::run);
     }
     if let Some(path) = config.locale_smoke {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -680,6 +688,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         options_tab: 0,
         campaign_tab: 0,
         locale_smoke: None,
+        input_smoke: None,
     };
     let mut seen = HashSet::new();
     for pair in args.chunks(2) {
@@ -703,6 +712,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--menu-json" => config.report = Some(value.into()),
             "--smoke-json" => config.smoke = Some(value.into()),
             "--locale-smoke-json" => config.locale_smoke = Some(value.into()),
+            "--input-smoke-json" => config.input_smoke = Some(value.into()),
             "--movie" => config.movie = Some(shadow_formats::normalize_path(value)?),
             "--movie-json" => config.movie_report = Some(value.into()),
             "--evacuation-smoke-json" => config.evacuation_smoke = Some(value.into()),
@@ -823,9 +833,15 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         + usize::from(config.movie_smoke.is_some())
         + usize::from(config.evacuation_smoke.is_some())
         + usize::from(config.locale_smoke.is_some())
+        + usize::from(config.input_smoke.is_some())
         > 1
     {
         return Err("выбери один выходной файл".into());
+    }
+    if config.input_smoke.is_some()
+        && (!seen.contains("--settings") || config.screen != Screen::Main)
+    {
+        return Err("--input-smoke-json requires --screen main and isolated --settings".into());
     }
     if config.locale_smoke.is_some() && config.screen != Screen::Main {
         return Err("--locale-smoke-json starts at --screen main".into());

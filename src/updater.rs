@@ -55,6 +55,7 @@ pub fn check(source: &str) -> Result<Option<Available>> {
     let source = Url::parse(source).context("Некорректный адрес обновлений")?;
     let mut response = client(&source)?
         .get(source.clone())
+        .header(reqwest::header::CACHE_CONTROL, "no-cache")
         .timeout(Duration::from_secs(20))
         .send()?;
     if response.status() == StatusCode::NOT_FOUND {
@@ -131,12 +132,20 @@ impl Installed {
             .context("Нет файла движка")?;
         let executable = directory.join(entrypoint);
         verify_file(&executable, file.size, &file.sha256)?;
+        let log_path = root.join("engine.log");
+        if fs::metadata(&log_path).is_ok_and(|m| m.len() > 5 * 1024 * 1024) {
+            let _ = fs::rename(&log_path, root.join("engine.previous.log"));
+        }
         let log = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(root.join("engine.log"))?;
+            .open(log_path)?;
         // A fixed argument contract; no shell and no remote commands from a manifest.
         Command::new(executable)
+            .env(
+                "RUST_LOG",
+                std::env::var("OPENSC_ENGINE_LOG").unwrap_or_else(|_| "info".into()),
+            )
             .arg("--game-dir")
             .arg(data_path.canonicalize()?)
             .arg("--settings")
@@ -178,6 +187,39 @@ pub fn verify_file(path: &Path, size: u64, expected: &str) -> Result<()> {
     Ok(())
 }
 
+fn download(client: &Client, url: Url, cancel: &AtomicBool) -> Result<reqwest::blocking::Response> {
+    for attempt in 0..4 {
+        ensure!(!cancel.load(Ordering::Relaxed), "Установка отменена");
+        let response = client.get(url.clone()).send()?;
+        if matches!(
+            response.status(),
+            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+        ) && attempt < 3
+        {
+            let seconds = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(10)
+                .max(1);
+            ensure!(
+                seconds <= 60,
+                "Сервер просит подождать {seconds} секунд; повтори загрузку позже"
+            );
+            drop(response);
+            let until = std::time::Instant::now() + Duration::from_secs(seconds);
+            while std::time::Instant::now() < until {
+                ensure!(!cancel.load(Ordering::Relaxed), "Установка отменена");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        } else {
+            return Ok(response.error_for_status()?);
+        }
+    }
+    anyhow::bail!("Сервер временно не принимает загрузку")
+}
+
 pub fn install(
     available: &Available,
     root: &Path,
@@ -215,10 +257,7 @@ pub fn install(
         let path = staging.path().join(&file.path);
         fs::create_dir_all(path.parent().context("Путь без родительской папки")?)?;
         let mut output = File::create(&path)?;
-        let mut response = client
-            .get(file.download_url(&available.source)?)
-            .send()?
-            .error_for_status()?;
+        let mut response = download(&client, file.download_url(&available.source)?, cancel)?;
         let mut size = 0u64;
         let mut hash = Sha256::new();
         let mut buffer = [0; 128 * 1024];

@@ -2,7 +2,7 @@ name: Build web server
 on:
   workflow_dispatch:
   push:
-    paths: ['server/**', '.github/workflows/server.yml']
+    paths: ['server/**', '.gitattributes', 'crates/report-protocol/**', '.github/workflows/server.yml']
 
 jobs:
   server:
@@ -17,6 +17,7 @@ jobs:
           sudo apt-get install -y musl-tools
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup target add x86_64-unknown-linux-musl
+      - run: cargo fmt --manifest-path crates/report-protocol/Cargo.toml --check
       - run: cargo fmt --manifest-path server/Cargo.toml --check
       - run: cargo test --manifest-path server/Cargo.toml --locked
       - run: cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings
@@ -27,13 +28,19 @@ jobs:
           cp server/target/x86_64-unknown-linux-musl/release/opensc-web dist/opensc-web
           cp server/Dockerfile dist/Dockerfile
           docker build -t opensc-web:check dist
-          docker run -d --name opensc-web-check -p 127.0.0.1:18080:8080 -v "$PWD/deploy/site:/srv/shadow:ro" --read-only --cap-drop ALL --security-opt no-new-privileges:true opensc-web:check
+          mkdir -p reports-ci
+          sudo chown 65532:65532 reports-ci
+          docker run -d --name opensc-web-check -p 127.0.0.1:18080:8080 -v "$PWD/deploy/site:/srv/shadow:ro" -v "$PWD/reports-ci:/srv/reports" -e OPENSC_REPORT_DB=/srv/reports/bugs.sqlite3 --read-only --cap-drop ALL --security-opt no-new-privileges:true opensc-web:check
           for attempt in $(seq 1 20); do
             if docker exec opensc-web-check /opensc-web --healthcheck; then break; fi
             sleep 1
           done
           docker exec opensc-web-check /opensc-web --healthcheck
           curl --fail http://127.0.0.1:18080/ -o /dev/null
+          curl --fail -H 'Content-Type: application/json' --data-binary @server/tests/report-fixture.json http://127.0.0.1:18080/api/v1/bug-reports
+          docker exec opensc-web-check /opensc-web --reports list
+          docker exec opensc-web-check /opensc-web --reports backup /srv/reports/ci-backup.sqlite3
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/bugs.sqlite3)" = 404
           docker rm -f opensc-web-check
           cd dist
           sha256sum opensc-web Dockerfile > SHA256SUMS.txt

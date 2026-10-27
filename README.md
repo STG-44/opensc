@@ -92,7 +92,9 @@ Workflow `.github/workflows/build.yml` запускает тесты и созд
 Локальная упаковка готового исполняемого файла:
 
 ```sh
+cargo metadata --locked --format-version 1 --filter-platform x86_64-apple-darwin > launcher-metadata.json
 python3 scripts/package_launcher.py \
+  --cargo-metadata launcher-metadata.json \
   --binary target/release/opensc-launcher \
   --platform macos-x86_64 \
   --output dist --installers
@@ -119,3 +121,14 @@ macOS-пакет имеет ad-hoc подпись без Developer ID и нот�
 Обновлено 17 октября 2026 года: на `shadow-test.zaikinagroup.ru` опубликованы новый сайт и лаунчер 0.2.0 — десять установщиков и архивов с SHA-256. Исходный коммит сборок — `b9813dadda27117e2ca607ea979d1bde8a1029d1`. Старые архивы 0.1.0 сохранены. `/updates/manifest-v1.json` содержит `release: null`, потому что движок будет подключён позже. Перед обновлением сохранена резервная копия текущей раздачи. Конфигурация Traefik и настройки DNS не менялись.
 
 18 октября 2026 года маршрут только этого домена переключён на `opensc_web:8080` с лимитами запросов и параллельных передач. TLS, DNS и остальные сайты сохранены. Копия предыдущей страницы и маршрута находится в `/mnt/data/shadow-company/deployments/opensc-web-sK38zzqU/backup`.
+
+
+## Подготовка выпуска 0.4.0
+
+Эта ветка добавляет новое оформление лаунчера, повторную проверку игры раз в минуту,
+[подписанное самообновление](docs/LAUNCHER-UPDATES-RU.md) и
+[сообщения об ошибках](docs/BUG-REPORTS-RU.md) с серверной базой. Игровая часть
+исправляет состояние кнопок после инвентаря и добавляет
+[переноску тел](engine/docs/BODY-CARRY-RU.md). Старый лаунчер 0.3.0 нужно обновить
+один раз установщиком: в нём ещё нет механизма обновления самого лаунчера.
+Публикация канала выполняется отдельно после CI и нативных проверок.

@@ -1,4 +1,5 @@
 pub mod guard;
+pub mod reports;
 
 use axum::{
     Router,
@@ -28,6 +29,7 @@ pub struct WebState {
     pub guard: Arc<Guard>,
     pub trusted_proxies: Arc<RwLock<HashSet<IpAddr>>>,
     pub proxy_required: bool,
+    pub reports: Option<Arc<reports::Store>>,
 }
 
 impl WebState {
@@ -36,6 +38,7 @@ impl WebState {
             guard: Arc::new(Guard::new(policy)),
             trusted_proxies: Arc::new(RwLock::new(proxies)),
             proxy_required,
+            reports: None,
         }
     }
 
@@ -75,7 +78,18 @@ impl WebState {
 }
 
 pub fn app(root: PathBuf, state: WebState) -> Router {
-    Router::new()
+    let mut router = Router::new();
+    if let Some(store) = state.reports.clone() {
+        router = router
+            .route(
+                opensc_report_protocol::API_PATH,
+                axum::routing::post(reports::submit).layer(axum::extract::DefaultBodyLimit::max(
+                    opensc_report_protocol::MAX_BODY,
+                )),
+            )
+            .layer(axum::Extension(store));
+    }
+    router
         .route("/healthz", get(|| async { "opensc-ready\n" }))
         .fallback_service(ServeDir::new(root).append_index_html_on_directories(true))
         .layer(middleware::from_fn_with_state(state, protect))
@@ -131,7 +145,14 @@ async fn protect(State(state): State<WebState>, request: Request, next: Next) ->
         Ok(ip) => ip,
         Err(status) => return finish(error(status, "Invalid proxy request.\n", None), false),
     };
-    let traffic = if decoded.starts_with("/downloads/") || decoded.starts_with("/updates/releases/")
+    let report_post = decoded == opensc_report_protocol::API_PATH
+        && request.method() == Method::POST
+        && state.reports.is_some();
+    let traffic = if decoded == opensc_report_protocol::API_PATH {
+        Traffic::Report
+    } else if decoded.starts_with("/downloads/")
+        || (decoded.starts_with("/updates/releases/")
+            || decoded.starts_with("/updates/launcher-releases/"))
     {
         Traffic::Download
     } else if decoded.starts_with("/updates/") {
@@ -175,7 +196,7 @@ async fn protect(State(state): State<WebState>, request: Request, next: Next) ->
             false,
         );
     }
-    if !matches!(*request.method(), Method::GET | Method::HEAD) {
+    if !report_post && !matches!(*request.method(), Method::GET | Method::HEAD) {
         let mut response = error(
             StatusCode::METHOD_NOT_ALLOWED,
             "Only GET and HEAD are supported.\n",
@@ -186,12 +207,13 @@ async fn protect(State(state): State<WebState>, request: Request, next: Next) ->
             .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
         return finish(response, false);
     }
-    if request.headers().contains_key(header::TRANSFER_ENCODING)
-        || request
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .is_some_and(|value| value != "0")
-        || request.body().size_hint().lower() > 0
+    if !report_post
+        && (request.headers().contains_key(header::TRANSFER_ENCODING)
+            || request
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .is_some_and(|value| value != "0")
+            || request.body().size_hint().lower() > 0)
     {
         return finish(
             error(
@@ -242,8 +264,12 @@ async fn protect(State(state): State<WebState>, request: Request, next: Next) ->
     } else {
         None
     };
-    let no_store = decoded.starts_with("/updates/") && !decoded.starts_with("/updates/releases/");
-    let immutable = decoded.starts_with("/updates/releases/");
+    let no_store = report_post
+        || decoded.starts_with("/updates/")
+            && !(decoded.starts_with("/updates/releases/")
+                || decoded.starts_with("/updates/launcher-releases/"));
+    let immutable = decoded.starts_with("/updates/releases/")
+        || decoded.starts_with("/updates/launcher-releases/");
     let mut response = match tokio::time::timeout(Duration::from_secs(10), next.run(request)).await
     {
         Ok(response) => response,

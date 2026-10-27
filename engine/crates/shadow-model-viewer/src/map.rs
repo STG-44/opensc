@@ -1,6 +1,7 @@
 //! Первая карта: MTF-расстановка, PCX-рельеф, JPG-поверхность и SMF-объекты.
 mod armor;
 mod asset_mesh;
+mod body_carry;
 mod combat;
 mod evacuation;
 mod fence;

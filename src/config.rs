@@ -13,6 +13,7 @@ pub struct Config {
     pub data_path: String,
     pub overrides_path: String,
     pub auto_update: bool,
+    pub auto_update_launcher: bool,
 }
 
 impl Default for Config {
@@ -22,6 +23,7 @@ impl Default for Config {
             data_path: String::new(),
             overrides_path: String::new(),
             auto_update: true,
+            auto_update_launcher: true,
         }
     }
 }
