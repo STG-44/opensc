@@ -12,10 +12,12 @@ services:
     stop_grace_period: 30s
     environment:
       OPENSC_WEB_ROOT: /srv/shadow
+      OPENSC_REPORT_DB: /srv/reports/bugs.sqlite3
       OPENSC_WEB_BIND: 0.0.0.0:8080
       OPENSC_TRUSTED_PROXY_HOST: traefik
     volumes:
       - /mnt/data/shadow-company/public:/srv/shadow:ro
+      - /mnt/data/shadow-company/reports:/srv/reports:rw
     networks: [gateway]
     healthcheck:
       test: ["CMD", "/opensc-web", "--healthcheck"]

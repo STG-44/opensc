@@ -1,0 +1,15 @@
+/target/
+/local/
+/dist/
+/metadata.json
+__pycache__/
+*.pyc
+*.gut
+*.mdf
+*.mds
+*.exe
+*.dll
+*.log
+.env
+.DS_Store
+Thumbs.db

@@ -36,6 +36,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#BinaryPath}"; DestDir: "{app}"; DestName: "opensc-launcher.exe"; Flags: ignoreversion
 
+Source: "{#NoticesPath}"; DestDir: "{app}"; DestName: "THIRD-PARTY-NOTICES.txt"; Flags: ignoreversion
+
 [Icons]
 Name: "{userprograms}\OpenSC Launcher"; Filename: "{app}\opensc-launcher.exe"
 Name: "{userdesktop}\OpenSC Launcher"; Filename: "{app}\opensc-launcher.exe"; Tasks: desktopicon

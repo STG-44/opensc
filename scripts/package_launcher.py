@@ -2,6 +2,7 @@
 """Package the native launcher and optional installers, without engine/game data."""
 import argparse
 import hashlib
+import json
 import os
 import plistlib
 import re
@@ -64,6 +65,10 @@ def mac_app(binary, root, version, platform):
 
 def mac_packages(binary, root, output, stem, args):
     app = mac_app(binary, root, args.version, args.platform)
+    shutil.copyfile(args.notices, app / 'Contents/Resources/THIRD-PARTY-NOTICES.txt')
+    if sys.platform == 'darwin':
+        run('codesign', '--force', '--sign', '-', app)
+        run('codesign', '--verify', '--deep', '--strict', app)
     destination = output / (stem + '.zip')
     if sys.platform == 'darwin':
         run('ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', app, destination)
@@ -91,6 +96,7 @@ def windows_packages(binary, root, output, stem, args):
     portable = root / 'portable'
     portable.mkdir()
     copy_executable(binary, portable / 'opensc-launcher.exe')
+    shutil.copyfile(args.notices, portable / 'THIRD-PARTY-NOTICES.txt')
     generated = [Path(shutil.make_archive(str(output / stem), 'zip', portable))]
     if args.installers:
         if sys.platform != 'win32':
@@ -102,13 +108,16 @@ def windows_packages(binary, root, output, stem, args):
                 compiler = str(candidate)
         if not compiler:
             raise RuntimeError('Inno Setup compiler ISCC.exe not found')
-        run(compiler, f'/DAppVersion={args.version}', f'/DBinaryPath={binary}', f'/DIconPath={PROJECT / "assets/opensc.ico"}', f'/DOutputPath={output}', PROJECT / 'packaging/windows/launcher.iss')
+        run(compiler, f'/DAppVersion={args.version}', f'/DBinaryPath={binary}', f'/DIconPath={PROJECT / "assets/opensc.ico"}', f'/DNoticesPath={args.notices}', f'/DOutputPath={output}', PROJECT / 'packaging/windows/launcher.iss')
         generated.append(output / (stem + '-setup.exe'))
     return generated
 
 
-def linux_tree(binary, target):
+def linux_tree(binary, target, notices):
     copy_executable(binary, target / 'usr/bin/opensc-launcher')
+    docs = target / 'usr/share/doc/opensc-launcher'
+    docs.mkdir(parents=True)
+    shutil.copyfile(notices, docs / 'THIRD-PARTY-NOTICES.txt')
     icons = target / 'usr/share/icons/hicolor/256x256/apps'
     icons.mkdir(parents=True)
     shutil.copyfile(PROJECT / 'assets/opensc.png', icons / 'opensc-launcher.png')
@@ -121,13 +130,14 @@ def linux_packages(binary, root, output, stem, args):
     portable = root / 'portable'
     portable.mkdir()
     copy_executable(binary, portable / 'opensc-launcher')
+    shutil.copyfile(args.notices, portable / 'THIRD-PARTY-NOTICES.txt')
     generated = [Path(shutil.make_archive(str(output / stem), 'gztar', portable))]
     if not args.installers:
         return generated
     if not sys.platform.startswith('linux'):
         raise RuntimeError('Linux installers require Linux packaging tools')
     deb_root = root / 'deb'
-    linux_tree(binary, deb_root)
+    linux_tree(binary, deb_root, args.notices)
     control = deb_root / 'DEBIAN'
     control.mkdir()
     size_kib = (sum(p.stat().st_size for p in deb_root.rglob('*') if p.is_file()) + 1023) // 1024
@@ -150,7 +160,7 @@ Description: Native launcher for Open Shadow Company
     generated.append(deb)
 
     arch = root / 'arch'
-    linux_tree(binary, arch)
+    linux_tree(binary, arch, args.notices)
     size = sum(p.stat().st_size for p in arch.rglob('*') if p.is_file())
     metadata = f'''pkgname = opensc-launcher
 pkgbase = opensc-launcher
@@ -177,7 +187,7 @@ optdepend = xdg-desktop-portal: native folder picker
     generated.append(arch_package)
 
     appdir = root / 'OpenSC.AppDir'
-    linux_tree(binary, appdir)
+    linux_tree(binary, appdir, args.notices)
     (appdir / 'opensc-launcher.desktop').write_text(DESKTOP)
     shutil.copyfile(PROJECT / 'assets/opensc.png', appdir / 'opensc-launcher.png')
     (appdir / 'AppRun').write_text('#!/bin/sh\nappdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$appdir/usr/bin/opensc-launcher" "$@"\n')
@@ -195,8 +205,38 @@ optdepend = xdg-desktop-portal: native folder picker
     return generated
 
 
+def source_hashes():
+    paths = [PROJECT / name for name in ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src/launcher-update-key.bin',
+             'crates/report-protocol/Cargo.toml', 'assets/opensc.png', 'assets/opensc.ico', 'assets/opensc-1024.png', 'deploy/site/assets/operation-map.jpg']]
+    paths += list((PROJECT / 'src').rglob('*.rs'))
+    paths += list((PROJECT / 'crates/report-protocol/src').rglob('*.rs'))
+    paths += [PROJECT/'engine/Cargo.toml',PROJECT/'engine/crates/shadow-formats/Cargo.toml',PROJECT/'third-party/unshield-LICENSE.txt']
+    paths += list((PROJECT/'engine/crates/shadow-formats/src').rglob('*.rs'))
+    return {p.relative_to(PROJECT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
+
+
+def notices(metadata, destination):
+    text = ['OpenSC Launcher: third-party notices\n', '\nInstallShield format reference: twogood/unshield\n', (PROJECT/'third-party/unshield-LICENSE.txt').read_text(encoding='utf-8')]
+    for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
+        if package['source'] is None:
+            continue
+        root = Path(package['manifest_path']).parent.resolve()
+        text.append(f"\n{'=' * 72}\n{package['name']} {package['version']}\nLicense: {package.get('license') or 'see supplied license file'}\n")
+        files = {p for p in root.iterdir() if p.is_file() and p.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE', 'COPYRIGHT'))}
+        if package.get('license_file'):
+            files.add(root / package['license_file'])
+        for path in sorted(files):
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                raise ValueError(f"License file outside dependency: {package['name']}")
+            text.append(f"\n--- {path.name} ---\n{resolved.read_text(encoding='utf-8')}\n")
+    destination.write_text(''.join(text), encoding='utf-8')
+
+
 def package(args):
     args.binary = args.binary.resolve(strict=True)
+    if args.binary.stat().st_size > 128 * 1024 * 1024:
+        raise ValueError('Launcher must be a stripped release binary below 128 MiB')
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
@@ -204,12 +244,29 @@ def package(args):
     stem = f'opensc-launcher-{args.version}-{args.platform}'
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
+        args.notices = root / 'THIRD-PARTY-NOTICES.txt'
+        notices(json.loads(args.cargo_metadata.read_text(encoding='utf-8')), args.notices)
         if args.platform.startswith('macos-'):
             paths = mac_packages(args.binary, root, args.output, stem, args)
         elif args.platform.startswith('windows-'):
             paths = windows_packages(args.binary, root, args.output, stem, args)
         else:
             paths = linux_packages(args.binary, root, args.output, stem, args)
+        raw = args.output / (f'opensc-launcher-self-{args.version}-{args.platform}' + ('.exe' if args.platform.startswith('windows-') else ''))
+        copy_executable(args.binary, raw)
+        if sys.platform == 'darwin':
+            run('codesign', '--force', '--sign', '-', raw)
+            run('codesign', '--verify', '--strict', raw)
+        notice = args.output / f'THIRD-PARTY-NOTICES-{args.platform}.txt'
+        shutil.copyfile(args.notices, notice)
+        sources = source_hashes()
+        info = dict(schema_version=1, project='opensc-launcher', version=args.version, platform=args.platform,
+                    source_files=sources, source_sha256=hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest(),
+                    git_revision=os.environ.get('GITHUB_SHA'), self_binary=dict(file=raw.name,size=raw.stat().st_size,sha256=hashlib.sha256(raw.read_bytes()).hexdigest()),
+                    notices=dict(file=notice.name,size=notice.stat().st_size,sha256=hashlib.sha256(notice.read_bytes()).hexdigest()))
+        metadata = args.output / f'build-info-{args.platform}.json'
+        metadata.write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        paths.extend([raw,notice,metadata])
     for path in paths:
         if not path.is_file():
             raise RuntimeError(f'Expected package was not created: {path}')
@@ -218,6 +275,7 @@ def package(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cargo-metadata', type=Path, required=True)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--platform', choices=['macos-x86_64', 'macos-aarch64', 'windows-x86_64', 'linux-x86_64'], required=True)
     parser.add_argument('--version', default=re.search(r'^version\s*=\s*"([^"]+)"', (PROJECT / 'Cargo.toml').read_text(), re.M).group(1))

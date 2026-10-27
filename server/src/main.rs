@@ -9,7 +9,40 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if env::args().any(|arg| arg == "--healthcheck") {
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    if arguments.first().is_some_and(|a| a == "--reports") {
+        let path = PathBuf::from(env::var_os("OPENSC_REPORT_DB").ok_or("Set OPENSC_REPORT_DB")?);
+        let store = opensc_web::reports::Store::open(&path)?;
+        match arguments.get(1).map(String::as_str) {
+            Some("list") => println!("{}", serde_json::to_string_pretty(&store.list()?)?),
+            Some("show") => println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &store.show(arguments.get(2).ok_or("Specify ticket ID")?)?
+                )?
+            ),
+            Some("status") => store.set_status(
+                arguments.get(2).ok_or("Specify ticket ID")?,
+                arguments.get(3).ok_or("Specify status")?,
+                arguments.get(4).map(String::as_str).unwrap_or(""),
+            )?,
+            Some("backup") => {
+                let destination = PathBuf::from(arguments.get(2).ok_or("Specify new backup path")?);
+                if destination.exists() {
+                    return Err("Backup destination already exists".into());
+                }
+                store.backup(&destination)?;
+                println!("Backup created");
+            }
+            _ => {
+                return Err(
+                    "Usage: --reports list | show ID | status ID STATE [NOTE] | backup PATH".into(),
+                );
+            }
+        }
+        return Ok(());
+    }
+    if arguments.iter().any(|arg| arg == "--healthcheck") {
         let mut connection =
             TcpStream::connect_timeout(&"127.0.0.1:8080".parse()?, Duration::from_secs(2))?;
         connection.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -45,7 +78,12 @@ async fn serve() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         HashSet::new()
     };
-    let state = WebState::new(Policy::default(), proxies, host.is_some());
+    let mut state = WebState::new(Policy::default(), proxies, host.is_some());
+    if let Some(path) = env::var_os("OPENSC_REPORT_DB") {
+        state.reports = Some(std::sync::Arc::new(opensc_web::reports::Store::open(
+            &PathBuf::from(path),
+        )?));
+    }
     if let Some(host) = host {
         let refresh = state.clone();
         tokio::spawn(async move {

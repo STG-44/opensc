@@ -1,6 +1,6 @@
 [package]
 name = "opensc-web"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Rust/Axum file server with abuse controls for OpenSC"
@@ -8,7 +8,11 @@ description = "Rust/Axum file server with abuse controls for OpenSC"
 [workspace]
 
 [dependencies]
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
+opensc-report-protocol = { path = "../crates/report-protocol" }
+rusqlite = { version = "=0.41.0", features = ["bundled", "backup"] }
+serde_json = "1"
+sha2 = "0.11"
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
 http-body = "1"
 percent-encoding = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }

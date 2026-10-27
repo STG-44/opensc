@@ -1,4 +1,297 @@
 {
   "schema_version": 1,
-  "release": null
+  "release": {
+    "version": "0.1.0-test.20261022.1",
+    "notes": "Тестовая игра OpenSC: главное меню, видео и обучение с HUD оригинала. Нужны ресурсы своей копии Shadow Company. Полная кампания ещё разрабатывается.",
+    "data_directory": null,
+    "entrypoints": {
+      "macos-x86_64": "bin/x86_64-apple-darwin/shadow-game",
+      "windows-x86_64": "bin/x86_64-pc-windows-msvc/shadow-game.exe",
+      "macos-aarch64": "bin/aarch64-apple-darwin/shadow-game",
+      "linux-aarch64": "bin/aarch64-unknown-linux-gnu/shadow-game",
+      "linux-x86_64": "bin/x86_64-unknown-linux-gnu/shadow-game"
+    },
+    "files": [
+      {
+        "path": "README-RU.txt",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/README-RU.txt",
+        "size": 974,
+        "sha256": "05f20bd862ecc0ac4080a47021a5accf113956955c58c715f9310392dba313a3",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/THIRD-PARTY-NOTICES.txt",
+        "size": 3918927,
+        "sha256": "8d08bfef86603a4ee126e0db60fa90665f2f15214df91c862b57e9809225c5bb",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "bin/x86_64-apple-darwin/shadow-game",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/bin/x86_64-apple-darwin/shadow-game",
+        "size": 93618320,
+        "sha256": "eb2f2691a5872dcc043a3a3c70c55ddfd31b8b00a4f94a017393e185fc25a89b",
+        "executable": true,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "build-info.json",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/build-info.json",
+        "size": 8460,
+        "sha256": "7796ec9cfaaca370c1bbe2692258eb080c67740ee058f26ab684f56e77fc2fe4",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "docs/CONTROLS-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/docs/CONTROLS-RU.md",
+        "size": 11883,
+        "sha256": "154026899b6ccac3827192c2da0d8a234d2248c5ea337768aa91e7cb40ab46ad",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "docs/HUD-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/docs/HUD-RU.md",
+        "size": 7012,
+        "sha256": "a118fe97bcedb537baf8315c1b42afd7ec65cf7c553c61c1c2695e9fa2771fff",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "package-files.json",
+        "url": "releases/0.1.0-test.20261022.1/macos-x86_64/package-files.json",
+        "size": 1022,
+        "sha256": "906fa7ad54744c2bf37afb29dffe914e881ae6f07796e57039f535535977d510",
+        "executable": false,
+        "platform": "macos-x86_64"
+      },
+      {
+        "path": "README-RU.txt",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/README-RU.txt",
+        "size": 985,
+        "sha256": "90e4271813fc4e067668e619f61dbb4bc1c231fb4a0adc7193856c726fd26f2d",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/THIRD-PARTY-NOTICES.txt",
+        "size": 4094497,
+        "sha256": "04349a3913fe7b82571cbb71264a836fd6775e3c78b8bd02f7594c0d64af95ff",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "bin/x86_64-pc-windows-msvc/shadow-game.exe",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/bin/x86_64-pc-windows-msvc/shadow-game.exe",
+        "size": 100768768,
+        "sha256": "80c2bc13388e006d168fcb53da27efb278fc3fdc69a245b3f68b5c0e1913bb55",
+        "executable": true,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "build-info.json",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/build-info.json",
+        "size": 8561,
+        "sha256": "df54e0806bff4dcba06994d74fe81bc8d78b1d9c51ab28e5a582fb3d3d697a6d",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "docs/CONTROLS-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/docs/CONTROLS-RU.md",
+        "size": 11883,
+        "sha256": "154026899b6ccac3827192c2da0d8a234d2248c5ea337768aa91e7cb40ab46ad",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "docs/HUD-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/docs/HUD-RU.md",
+        "size": 7012,
+        "sha256": "a118fe97bcedb537baf8315c1b42afd7ec65cf7c553c61c1c2695e9fa2771fff",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "package-files.json",
+        "url": "releases/0.1.0-test.20261022.1/windows-x86_64/package-files.json",
+        "size": 1068,
+        "sha256": "540502fcc274b6dce892a177304c61f685358f6553b0a9feed05ab30aeedb134",
+        "executable": false,
+        "platform": "windows-x86_64"
+      },
+      {
+        "path": "README-RU.txt",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/README-RU.txt",
+        "size": 974,
+        "sha256": "05f20bd862ecc0ac4080a47021a5accf113956955c58c715f9310392dba313a3",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/THIRD-PARTY-NOTICES.txt",
+        "size": 3894655,
+        "sha256": "43f2628ce17bf045561db7e3cb331f0455d95336a77b61481d9a3345ad899e0f",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "bin/aarch64-apple-darwin/shadow-game",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/bin/aarch64-apple-darwin/shadow-game",
+        "size": 92592640,
+        "sha256": "ad198b10b71f6c47041b6a8293c3652ef92a1e58cbf429182b4fb9cf310bb80c",
+        "executable": true,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "build-info.json",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/build-info.json",
+        "size": 8462,
+        "sha256": "fc60cc2cb28ca04e4c664eec557c793ece1eed9f1d1582cf7275ec4344358827",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "docs/CONTROLS-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/docs/CONTROLS-RU.md",
+        "size": 11883,
+        "sha256": "154026899b6ccac3827192c2da0d8a234d2248c5ea337768aa91e7cb40ab46ad",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "docs/HUD-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/docs/HUD-RU.md",
+        "size": 7012,
+        "sha256": "a118fe97bcedb537baf8315c1b42afd7ec65cf7c553c61c1c2695e9fa2771fff",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "package-files.json",
+        "url": "releases/0.1.0-test.20261022.1/macos-aarch64/package-files.json",
+        "size": 1023,
+        "sha256": "0ac9fca17d58027ea922774924a0594b0710196cb5d0714f17e51bf59b98b5f0",
+        "executable": false,
+        "platform": "macos-aarch64"
+      },
+      {
+        "path": "README-RU.txt",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/README-RU.txt",
+        "size": 974,
+        "sha256": "05f20bd862ecc0ac4080a47021a5accf113956955c58c715f9310392dba313a3",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/THIRD-PARTY-NOTICES.txt",
+        "size": 4063990,
+        "sha256": "6104ee97a10627478fc155c688918165a9f39e28361a9ae39e899cfc6ac1ccf4",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "bin/aarch64-unknown-linux-gnu/shadow-game",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/bin/aarch64-unknown-linux-gnu/shadow-game",
+        "size": 110255856,
+        "sha256": "c9ccf7245551bdecac535bd2151f1776f78ea7f0e22515965782ecc284acb37b",
+        "executable": true,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "build-info.json",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/build-info.json",
+        "size": 8474,
+        "sha256": "7c289b60a4331ba34ae4ea33bca113b155242065517919904446cf208dbf49bc",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "docs/CONTROLS-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/docs/CONTROLS-RU.md",
+        "size": 11883,
+        "sha256": "154026899b6ccac3827192c2da0d8a234d2248c5ea337768aa91e7cb40ab46ad",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "docs/HUD-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/docs/HUD-RU.md",
+        "size": 7012,
+        "sha256": "a118fe97bcedb537baf8315c1b42afd7ec65cf7c553c61c1c2695e9fa2771fff",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "package-files.json",
+        "url": "releases/0.1.0-test.20261022.1/linux-aarch64/package-files.json",
+        "size": 1029,
+        "sha256": "927630e4f6f52d4961eebbe38b66c1415f56f01e2ee38d0354cac8754ac8a4a5",
+        "executable": false,
+        "platform": "linux-aarch64"
+      },
+      {
+        "path": "README-RU.txt",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/README-RU.txt",
+        "size": 974,
+        "sha256": "05f20bd862ecc0ac4080a47021a5accf113956955c58c715f9310392dba313a3",
+        "executable": false,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "THIRD-PARTY-NOTICES.txt",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/THIRD-PARTY-NOTICES.txt",
+        "size": 4088262,
+        "sha256": "6cacc9aaeb5c78d96bb9129b92445160d006744088c779c8a70df890e08d427c",
+        "executable": false,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "bin/x86_64-unknown-linux-gnu/shadow-game",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/bin/x86_64-unknown-linux-gnu/shadow-game",
+        "size": 117784752,
+        "sha256": "c61d393269a9e3cec73abf63ba5b920ef8fe57b9f73d7e95313b3e2584d9bd74",
+        "executable": true,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "build-info.json",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/build-info.json",
+        "size": 8472,
+        "sha256": "bea1b12d02c787d5520353287aeb1fd5e2bd45cd5fda9962d76fd0f01a5d515d",
+        "executable": false,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "docs/CONTROLS-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/docs/CONTROLS-RU.md",
+        "size": 11883,
+        "sha256": "154026899b6ccac3827192c2da0d8a234d2248c5ea337768aa91e7cb40ab46ad",
+        "executable": false,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "docs/HUD-RU.md",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/docs/HUD-RU.md",
+        "size": 7012,
+        "sha256": "a118fe97bcedb537baf8315c1b42afd7ec65cf7c553c61c1c2695e9fa2771fff",
+        "executable": false,
+        "platform": "linux-x86_64"
+      },
+      {
+        "path": "package-files.json",
+        "url": "releases/0.1.0-test.20261022.1/linux-x86_64/package-files.json",
+        "size": 1028,
+        "sha256": "f6673c15955ad693d00f26e34a678e598e2974a9dabda2e4fcedfe0e4730da62",
+        "executable": false,
+        "platform": "linux-x86_64"
+      }
+    ]
+  }
 }
