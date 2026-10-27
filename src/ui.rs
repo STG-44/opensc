@@ -558,84 +558,92 @@ impl Launcher {
         let width = ui.available_width();
         let button_width = 220.0;
         ui.horizontal_top(|ui| {
-            ui.allocate_ui(Vec2::new(width - button_width - 24.0, 94.0), |ui| {
-                ui.horizontal(|ui| {
-                    if self.busy() {
-                        ui.spinner();
-                    }
-                    ui.label(RichText::new(&self.status).size(16.0).strong());
-                });
-                if let Some(progress) = &self.progress {
-                    let fraction = if progress.total > 0 {
-                        progress.downloaded as f32 / progress.total as f32
-                    } else {
-                        0.0
-                    };
-                    let speed = self
-                        .download_started
-                        .map(|at| progress.downloaded as f64 / at.elapsed().as_secs_f64().max(0.1))
-                        .unwrap_or(0.0);
-                    ui.add(
-                        egui::ProgressBar::new(fraction)
-                            .fill(ACCENT)
-                            .desired_height(8.0),
-                    );
-                    ui.label(
-                        RichText::new(format!(
-                            "{} / {}  ·  {}/с  ·  {:.0}%",
-                            bytes(progress.downloaded),
-                            bytes(progress.total),
-                            bytes(speed as u64),
-                            fraction * 100.0
-                        ))
-                        .small()
-                        .color(MUTED),
-                    );
-                    if ui.small_button("Остановить загрузку").clicked() {
-                        self.cancel.store(true, Ordering::Relaxed);
-                        self.blocked_update = self
-                            .available
-                            .as_ref()
-                            .and_then(|a| a.release.fingerprint().ok());
-                    }
-                } else {
-                    let version = self
-                        .installed
-                        .as_ref()
-                        .map(|i| i.release.version.as_str())
-                        .unwrap_or("не установлена");
-                    ui.label(
-                        RichText::new(format!(
-                            "Версия игры: {version}  ·  {}",
-                            opensc_launcher::platform()
-                        ))
-                        .small()
-                        .color(MUTED),
-                    );
+            ui.allocate_ui_with_layout(
+                Vec2::new(width - button_width - 24.0, 94.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width - button_width - 24.0);
                     ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !self.busy(),
-                                egui::Button::new("Проверить обновления").small(),
-                            )
-                            .clicked()
-                        {
-                            self.check(ctx);
-                            self.next_launcher_check = Instant::now();
+                        if self.busy() {
+                            ui.spinner();
                         }
-                        if ui.small_button("Папка игры и настройки").clicked() {
-                            self.settings = true;
-                        }
+                        ui.label(RichText::new(&self.status).size(16.0).strong());
                     });
-                }
-                if let Some(error) = &self.error {
-                    egui::ScrollArea::vertical()
-                        .max_height(48.0)
-                        .show(ui, |ui| {
-                            ui.colored_label(Color32::from_rgb(245, 154, 126), error);
+                    if let Some(progress) = &self.progress {
+                        let fraction = if progress.total > 0 {
+                            progress.downloaded as f32 / progress.total as f32
+                        } else {
+                            0.0
+                        };
+                        let speed = self
+                            .download_started
+                            .map(|at| {
+                                progress.downloaded as f64 / at.elapsed().as_secs_f64().max(0.1)
+                            })
+                            .unwrap_or(0.0);
+                        ui.add(
+                            egui::ProgressBar::new(fraction)
+                                .fill(ACCENT)
+                                .desired_height(8.0),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{} / {}  ·  {}/с  ·  {:.0}%",
+                                bytes(progress.downloaded),
+                                bytes(progress.total),
+                                bytes(speed as u64),
+                                fraction * 100.0
+                            ))
+                            .small()
+                            .color(MUTED),
+                        );
+                        if ui.small_button("Остановить загрузку").clicked() {
+                            self.cancel.store(true, Ordering::Relaxed);
+                            self.blocked_update = self
+                                .available
+                                .as_ref()
+                                .and_then(|a| a.release.fingerprint().ok());
+                        }
+                    } else {
+                        let version = self
+                            .installed
+                            .as_ref()
+                            .map(|i| i.release.version.as_str())
+                            .unwrap_or("не установлена");
+                        ui.label(
+                            RichText::new(format!(
+                                "Версия игры: {version}  ·  {}",
+                                opensc_launcher::platform()
+                            ))
+                            .small()
+                            .color(MUTED),
+                        );
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    !self.busy(),
+                                    egui::Button::new("Проверить обновления").small(),
+                                )
+                                .clicked()
+                            {
+                                self.check(ctx);
+                                self.next_launcher_check = Instant::now();
+                            }
+                            if ui.small_button("Папка игры и настройки").clicked()
+                            {
+                                self.settings = true;
+                            }
                         });
-                }
-            });
+                    }
+                    if let Some(error) = &self.error {
+                        egui::ScrollArea::vertical()
+                            .max_height(48.0)
+                            .show(ui, |ui| {
+                                ui.colored_label(Color32::from_rgb(245, 154, 126), error);
+                            });
+                    }
+                },
+            );
             ui.vertical(|ui| {
                 let update = self
                     .available
@@ -770,7 +778,8 @@ impl eframe::App for Launcher {
                 let side = if rect.width() > 1050.0 { 310.0 } else { 265.0 };
                 let left = rect.width() - side - 40.0;
                 ui.horizontal_top(|ui| {
-                    ui.allocate_ui(Vec2::new(left, rect.height()), |ui| {
+                    ui.allocate_ui_with_layout(Vec2::new(left, rect.height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(left);
                         ui.add_space((rect.height() * 0.15).clamp(20.0, 80.0));
                         eyebrow(ui, "OPEN SHADOW COMPANY");
                         ui.add_space(12.0);
@@ -786,8 +795,8 @@ impl eframe::App for Launcher {
                             ui.label(RichText::new("WINDOWS · LINUX · macOS").monospace().size(10.0).color(MUTED));
                         });
                     });
-                    ui.add_space(20.0);
-                    ui.allocate_ui(Vec2::new(side, rect.height()), |ui| {
+                    ui.allocate_ui_with_layout(Vec2::new(side, rect.height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(side);
                         egui::ScrollArea::vertical().id_salt("news").show(ui, |ui| {
                             eyebrow(ui, "ОБНОВЛЕНИЯ ПРОЕКТА");
                             ui.add_space(8.0);
