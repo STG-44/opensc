@@ -38,11 +38,41 @@ impl Server {
         let worker = thread::spawn(move || {
             while !worker_done.load(Ordering::Relaxed) {
                 if let Ok((mut stream, _)) = listener.accept() {
+                    // BSD/macOS and Windows may inherit the listener's
+                    // nonblocking mode; Linux accept() does not.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
-                    let mut request = [0u8; 4096];
-                    let _ = stream.read(&mut request);
+                    // TCP can split headers across reads. Closing the socket
+                    // with unread request bytes can reset it on Windows.
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    while request.len() <= 65536 && !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let count = stream.read(&mut chunk).unwrap_or(0);
+                        if count == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&chunk[..count]);
+                    }
+                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':')
+                                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        while request.len() < end + 4 + length && request.len() <= 65536 {
+                            let count = stream.read(&mut chunk).unwrap_or(0);
+                            if count == 0 {
+                                break;
+                            }
+                            request.extend_from_slice(&chunk[..count]);
+                        }
+                    }
                     let header = format!(
                         "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
@@ -67,6 +97,125 @@ impl Drop for Server {
         self.done.store(true, Ordering::Relaxed);
         self.worker.take().unwrap().join().unwrap();
     }
+}
+
+#[test]
+fn bug_report_outbox_survives_network_failure_and_success_keeps_a_receipt() {
+    use opensc_launcher::{config::Config, reports};
+    use opensc_report_protocol::{Diagnostics, Report};
+    let root = tempfile::tempdir().unwrap();
+    let report = Report {
+        schema_version: 1,
+        request_id: "f".repeat(32),
+        category: "interface".into(),
+        title: "Inventory input freeze".into(),
+        steps: "Open training and click the inventory button".into(),
+        expected: "Controls work".into(),
+        actual: "Inventory stays open".into(),
+        diagnostics: Diagnostics {
+            launcher_version: "0.4.0".into(),
+            platform: opensc_launcher::platform(),
+            ..Diagnostics::default()
+        },
+    };
+    let unavailable = Server::new(b"temporarily unavailable".to_vec(), 503);
+    let mut config = Config {
+        manifest_url: unavailable.url.to_string(),
+        ..Config::default()
+    };
+    assert!(reports::send(root.path(), &config, &report).is_err());
+    assert_eq!(
+        reports::pending(root.path()).unwrap().request_id,
+        report.request_id
+    );
+    let available = Server::new(
+        br#"{"ticket_id":"OSC-123456ABCDEF","status":"new","duplicate":true}"#.to_vec(),
+        201,
+    );
+    config.manifest_url = available.url.to_string();
+    let receipt = reports::send(root.path(), &config, &report).unwrap();
+    assert_eq!(receipt.ticket_id, "OSC-123456ABCDEF");
+    assert!(receipt.duplicate && reports::pending(root.path()).is_none());
+    assert!(
+        root.path()
+            .join("reports/receipts")
+            .join(format!("{}.json", report.request_id))
+            .is_file()
+    );
+}
+
+#[test]
+fn throttled_download_honors_retry_after_and_installs_without_manual_restart() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let source = Url::parse(&format!(
+        "http://{}/manifest.json",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let worker = thread::spawn(move || {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = stream.read(&mut buffer).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let response = if attempt == 0 {
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nengine"
+            };
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    let root = tempfile::tempdir().unwrap();
+    let start = std::time::Instant::now();
+    let installed = updater::install(
+        &Available {
+            source,
+            release: release(b"engine"),
+        },
+        root.path(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    assert!(start.elapsed() >= Duration::from_secs(1));
+    installed.verify(root.path()).unwrap();
+    worker.join().unwrap();
+}
+
+#[test]
+fn fixture_waits_for_complete_http_headers() {
+    let server = Server::new(b"complete response".to_vec(), 200);
+    let address = format!("127.0.0.1:{}", server.url.port().unwrap());
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+        .unwrap();
+    let mut byte = [0];
+    let error = stream.read(&mut byte).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    stream.write_all(b"\r\n").unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.ends_with("complete response"));
 }
 
 fn release(bytes: &[u8]) -> Release {
@@ -233,7 +382,7 @@ fn inventories_without_following_symlinks() {
 #[cfg(unix)]
 #[test]
 fn launches_with_data_path_as_one_argument() {
-    let script = b"#!/bin/sh\nprintf '%s\\n' \"$1\" \"$2\" > launch-args.txt\n";
+    let script = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > launch-args.txt\n";
     let server = Server::new(script.to_vec(), 200);
     let available = Available {
         source: server.url.clone(),
@@ -261,6 +410,97 @@ fn launches_with_data_path_as_one_argument() {
     .unwrap();
     assert_eq!(
         arguments,
-        format!("--data\n{}\n", data.canonicalize().unwrap().display())
+        format!(
+            "--game-dir\n{}\n--settings\n{}\n--overrides\n{}\n",
+            data.canonicalize().unwrap().display(),
+            root.path()
+                .canonicalize()
+                .unwrap()
+                .join("game/settings.json")
+                .display(),
+            root.path()
+                .canonicalize()
+                .unwrap()
+                .join("overrides")
+                .display()
+        )
+    );
+}
+
+#[test]
+fn old_launcher_configuration_keeps_defaults_for_game_integration() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("config.json"),
+        br#"{"data_path":"existing/Data"}"#,
+    )
+    .unwrap();
+    let config = opensc_launcher::config::Config::load(root.path()).unwrap();
+    assert_eq!(config.data_path, "existing/Data");
+    assert!(config.overrides_path.is_empty());
+    assert!(config.auto_update);
+}
+
+#[cfg(unix)]
+#[test]
+fn updating_engine_preserves_settings_and_passes_unicode_overrides_without_shell() {
+    let script = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > launch-args.txt\n";
+    let server = Server::new(script.to_vec(), 200);
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("Оригинал с пробелами; $literal");
+    let overrides = root.path().join("Улучшения с пробелами; $literal");
+    fs::create_dir(&data).unwrap();
+    fs::create_dir(&overrides).unwrap();
+    fs::write(data.join("original.gut"), b"original unchanged").unwrap();
+    let config = opensc_launcher::config::Config {
+        overrides_path: overrides.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    config.save(root.path()).unwrap();
+    fs::create_dir(root.path().join("game")).unwrap();
+    fs::write(root.path().join("game/settings.json"), b"user preferences").unwrap();
+    let mut available = Available {
+        source: server.url.clone(),
+        release: release(script),
+    };
+    let old = updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    available.release.version = "0.1.1-test".into();
+    let new = updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    assert!(old.directory(root.path()).unwrap().is_dir());
+    assert!(
+        new.launch(root.path(), &data)
+            .unwrap()
+            .wait()
+            .unwrap()
+            .success()
+    );
+    let arguments =
+        fs::read_to_string(new.directory(root.path()).unwrap().join("launch-args.txt")).unwrap();
+    assert_eq!(
+        arguments,
+        format!(
+            "--game-dir\n{}\n--settings\n{}\n--overrides\n{}\n",
+            data.canonicalize().unwrap().display(),
+            root.path()
+                .canonicalize()
+                .unwrap()
+                .join("game/settings.json")
+                .display(),
+            overrides.canonicalize().unwrap().display()
+        )
+    );
+    assert_eq!(
+        fs::read(root.path().join("game/settings.json")).unwrap(),
+        b"user preferences"
+    );
+    assert_eq!(
+        fs::read(data.join("original.gut")).unwrap(),
+        b"original unchanged"
+    );
+    assert_eq!(
+        opensc_launcher::config::Config::load(root.path())
+            .unwrap()
+            .overrides_path,
+        config.overrides_path
     );
 }

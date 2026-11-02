@@ -71,3 +71,19 @@ Workflow `server.yml` собирает статический `x86_64-unknown-li
 
 Шаблоны: `compose.yml`, `traefik.yml`. Compose-файл производства хранится в
 `/opt/shadow-company/web.yml` и содержит конкретный проверенный тег образа.
+
+
+## Багрепорты (0.2.0)
+
+В compose добавлен OPENSC_REPORT_DB и отдельный постоянный том reports. Перед
+запуском создайте /mnt/data/shadow-company/reports и reports/backups с владельцем
+65532:65532 и правами 0700. Публичный каталог сохраняет прежний отдельный read-only том.
+Через API принимается только POST /api/v1/bug-reports; список и содержимое
+обращений доступны через SSH CLI. Описание формата, статусов и восстановления:
+[BUG-REPORTS-RU.md](../docs/BUG-REPORTS-RU.md).
+
+После проверки резервной копии установите backup-reports.sh в /opt/shadow-company/,
+а opensc-reports-backup.service/timer в /etc/systemd/system. Таймер делает снимок
+ежедневно после 03:30 UTC с распределением до 15 минут; Persistent=true позволяет
+выполнить пропущенный запуск после включения. Копии не удаляются автоматически.
+Откат веб-образа сохраняет каталог базы и резервные копии.

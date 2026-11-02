@@ -1,0 +1,9 @@
+FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libx11-dev libasound2-dev libudev-dev libwayland-dev \
+    libxkbcommon-dev libxkbcommon-x11-0 libxcursor-dev libxi-dev libxrandr-dev \
+    python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/build/target CARGO_HOME=/build/cargo
+ENV CARGO_PROFILE_RELEASE_STRIP=symbols
+WORKDIR /src
+CMD ["bash", "-ec", "cargo build --release --locked -j1 -p shadow-model-viewer --bin shadow-game; cargo metadata --locked --format-version 1 --filter-platform x86_64-unknown-linux-gnu > /build/metadata.json; python3 scripts/package-game.py --binary /build/target/release/shadow-game --cargo-metadata /build/metadata.json --target x86_64-unknown-linux-gnu --profile release --build-id 0.1.0-test.20261022.1 --output /build/package"]

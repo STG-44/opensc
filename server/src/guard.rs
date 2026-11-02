@@ -15,6 +15,7 @@ pub enum Traffic {
     Page,
     Update,
     Download,
+    Report,
 }
 
 #[derive(Clone, Copy)]
@@ -25,6 +26,8 @@ pub struct Policy {
     pub update_per_second: f64,
     pub download_burst: u32,
     pub download_per_second: f64,
+    pub report_burst: u32,
+    pub report_per_second: f64,
     pub max_clients: usize,
     pub downloads_per_ip: usize,
     pub downloads_total: usize,
@@ -39,6 +42,8 @@ impl Default for Policy {
             update_per_second: 1.0,
             download_burst: 8,
             download_per_second: 0.2,
+            report_burst: 3,
+            report_per_second: 0.1,
             max_clients: 10_000,
             downloads_per_ip: 4,
             downloads_total: 32,
@@ -88,6 +93,7 @@ struct Client {
     page: Bucket,
     update: Bucket,
     download: Bucket,
+    report: Bucket,
     downloads: Arc<Semaphore>,
     last_seen: Instant,
     probes_since: Instant,
@@ -101,6 +107,7 @@ impl Client {
             page: Bucket::new(policy.page_burst, policy.page_per_second, now),
             update: Bucket::new(policy.update_burst, policy.update_per_second, now),
             download: Bucket::new(policy.download_burst, policy.download_per_second, now),
+            report: Bucket::new(policy.report_burst, policy.report_per_second, now),
             downloads: Arc::new(Semaphore::new(policy.downloads_per_ip)),
             last_seen: now,
             probes_since: now,
@@ -170,6 +177,7 @@ impl Guard {
             Traffic::Page => {}
             Traffic::Update => client.update.take(now).map_err(Rejection::Limited)?,
             Traffic::Download => client.download.take(now).map_err(Rejection::Limited)?,
+            Traffic::Report => client.report.take(now).map_err(Rejection::Limited)?,
         }
         if probe {
             if now.saturating_duration_since(client.probes_since) >= PROBE_WINDOW {

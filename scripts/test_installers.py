@@ -35,6 +35,7 @@ def check_mac(directory, stem, version, root):
         with (app / 'Contents/Info.plist').open('rb') as stream:
             assert plistlib.load(stream)['CFBundleShortVersionString'] == version
         assert (app / 'Contents/Resources/opensc.icns').is_file()
+        assert (app / 'Contents/Resources/THIRD-PARTY-NOTICES.txt').is_file()
         check_help(app / 'Contents/MacOS/opensc-launcher', version, root / 'profile')
     finally:
         run('hdiutil', 'detach', mount)
@@ -49,6 +50,7 @@ def check_windows(directory, stem, version, root):
     run(directory / (stem + '-setup.exe'), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', f'/DIR={install}')
     binary = install / 'opensc-launcher.exe'
     assert binary.is_file()
+    assert (install / 'THIRD-PARTY-NOTICES.txt').is_file()
     check_help(binary, version, profile)
     run(install / 'unins000.exe', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
     deadline = time.monotonic() + 15
@@ -66,6 +68,7 @@ def check_linux(directory, stem, version, root):
     run('dpkg-deb', '--extract', deb, extracted)
     binary = extracted / 'usr/bin/opensc-launcher'
     check_help(binary, version, root / 'deb-profile')
+    assert (extracted / 'usr/share/doc/opensc-launcher/THIRD-PARTY-NOTICES.txt').is_file()
     desktop = extracted / 'usr/share/applications/opensc-launcher.desktop'
     assert 'Exec=opensc-launcher' in desktop.read_text()
     assert (extracted / 'usr/share/icons/hicolor/256x256/apps/opensc-launcher.png').is_file()
@@ -92,4 +95,6 @@ if __name__ == '__main__':
             check_windows(directory, stem, args.version, root)
         else:
             check_linux(directory, stem, args.version, root)
+        raw = directory / (f'opensc-launcher-self-{args.version}-{args.platform}' + ('.exe' if args.platform.startswith('windows-') else ''))
+        check_help(raw,args.version,root / 'self-update-profile')
     print(f'Installer checks passed: {args.platform}')
