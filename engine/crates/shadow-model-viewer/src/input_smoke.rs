@@ -89,6 +89,28 @@ fn opened(world: &World) -> bool {
     world.resource::<crate::inventory::Inventory>().open
 }
 
+fn slot(world: &mut World, kind: crate::inventory::Slot) -> Entity {
+    world
+        .query::<(Entity, &crate::inventory::Slot)>()
+        .iter(world)
+        .find_map(|(e, s)| (*s == kind).then_some(e))
+        .expect("original inventory slot")
+}
+fn snapshot(world: &mut World, smoke: &Smoke, name: &str) {
+    world
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(smoke.path.parent().unwrap().join(name)));
+}
+fn primary_ammo(world: &mut World) -> String {
+    world
+        .query::<(&crate::roster::Caption, &Text)>()
+        .iter(world)
+        .find(|(c, _)| c.0 == 1 && !c.1)
+        .expect("John primary ammo caption")
+        .1
+        .0
+        .clone()
+}
 pub(super) fn run(world: &mut World) {
     let mut smoke = world.remove_resource::<Smoke>().unwrap();
     smoke.frames += 1;
@@ -359,14 +381,170 @@ pub(super) fn run(world: &mut World) {
             assert!(!world.resource::<crate::combat::Combat>().carried);
             assert!(world.resource::<player::Player>().carry_movement.is_none());
             smoke.advance("D-places-body-and-restores-normal-controls");
+        }
+        24 if ready => {
+            let mut inv = world.resource_mut::<crate::inventory::Inventory>();
+            inv.owns_knife = true;
+            inv.collected = true;
+            inv.owns_uzi = true;
+            inv.owns_cutters = true;
+            inv.rounds = 7;
+            inv.uzi_rounds = 23;
+            let model = inv.gun.model.clone();
+            world.resource_mut::<player::Player>().weapon = Some(model);
+            let mut g = world.resource_mut::<crate::grenade::Grenade>();
+            g.collected = true;
+            g.secondary = true;
+            g.count = 3;
+            let mut m = world.resource_mut::<crate::medical::Medical>();
+            m.ground.collected = true;
+            m.uses = 4;
+            m.health = 230.;
+            let mut a = world.resource_mut::<crate::armor::Armor>();
+            a.ground.collected = true;
+            a.worn = true;
+            world.resource_mut::<crate::party::Party>().recruited = true;
+            smoke.advance("");
+        }
+        25 if ready => {
+            assert_eq!(primary_ammo(world), "7");
+            snapshot(world, &smoke, "hud-bda-7.png");
+            world
+                .resource_mut::<crate::inventory::Inventory>()
+                .take_round_for(crate::inventory::Weapon::Bda);
+            smoke.advance("portrait-shows-selected-BDA-magazine");
+        }
+        26 if ready => {
+            assert_eq!(primary_ammo(world), "6");
+            let model = world
+                .resource::<crate::inventory::Inventory>()
+                .uzi
+                .as_ref()
+                .unwrap()
+                .model
+                .clone();
+            world.resource_mut::<player::Player>().weapon = Some(model);
+            smoke.advance("portrait-ammo-decreases-after-shot");
+        }
+        27 if ready => {
+            assert_eq!(primary_ammo(world), "23");
+            snapshot(world, &smoke, "hud-uzi-23.png");
+            world.resource_mut::<crate::inventory::Inventory>().open = true;
+            smoke.advance("portrait-switches-to-UZI-magazine");
+        }
+        28 if ready => {
+            let e = slot(
+                world,
+                crate::inventory::Slot::Stored(crate::inventory::Weapon::Bda),
+            );
+            point(world, e);
+            smoke.advance("");
+        }
+        29 if ready => {
+            mouse(world, true);
+            smoke.advance("");
+        }
+        30 if ready => {
+            assert_eq!(
+                world.resource::<crate::inventory::Inventory>().drag,
+                Some(crate::inventory::Weapon::Bda)
+            );
+            let e = slot(world, crate::inventory::Slot::Primary);
+            point(world, e);
+            smoke.advance("");
+        }
+        31 if ready => {
+            mouse(world, false);
+            smoke.advance("");
+        }
+        32 if ready => {
+            let inv = world.resource::<crate::inventory::Inventory>();
+            assert_eq!(
+                inv.weapon(world.resource::<player::Player>()),
+                Some(crate::inventory::Weapon::Bda)
+            );
+            assert_eq!((inv.rounds, inv.uzi_rounds), (6, 23));
+            snapshot(world, &smoke, "inventory-bda-equipped.png");
+            let e = slot(world, crate::inventory::Slot::Next);
+            point(world, e);
+            smoke.advance("original-pack-drag-equips-weapon-and-retains-both-magazines");
+        }
+        33 if ready => {
+            mouse(world, true);
+            smoke.advance("");
+        }
+        34 if ready => {
+            mouse(world, false);
+            smoke.advance("");
+        }
+        35 if ready => {
+            assert_eq!(
+                world.resource::<crate::inventory::Inventory>().view_member,
+                2
+            );
+            assert_eq!(
+                world
+                    .query::<&crate::inventory_ui::ItemImage>()
+                    .iter(world)
+                    .count(),
+                0
+            );
+            snapshot(world, &smoke, "inventory-jack-empty.png");
+            let e = slot(world, crate::inventory::Slot::Next);
+            point(world, e);
+            smoke.advance("next-mercenary-shows-Jack-without-Johns-equipment");
+        }
+        36 if ready => {
+            mouse(world, true);
+            smoke.advance("");
+        }
+        37 if ready => {
+            mouse(world, false);
+            smoke.advance("");
+        }
+        38 if ready => {
+            assert_eq!(
+                world.resource::<crate::inventory::Inventory>().view_member,
+                1
+            );
+            assert!(
+                world
+                    .query::<&crate::inventory_ui::ItemImage>()
+                    .iter(world)
+                    .any(|i| i.0 == crate::inventory_ui::Item::Bda)
+            );
+            smoke.advance("return-to-John-restores-equipment-view");
+            let e = slot(world, crate::inventory::Slot::Skills);
+            point(world, e);
+        }
+        39 if ready => {
+            mouse(world, true);
+            smoke.advance("");
+        }
+        40 if ready => {
+            mouse(world, false);
+            smoke.advance("");
+        }
+        41 if ready => {
+            assert!(world.resource::<crate::inventory::Inventory>().skills);
+            if *world.resource::<crate::localization::Language>()
+                == crate::localization::Language::English
+            {
+                assert!(
+                    world
+                        .query::<&Text>()
+                        .iter(world)
+                        .all(|t| !crate::localization::has_cyrillic(&t.0))
+                );
+            }
+            snapshot(world, &smoke, "inventory-skills.png");
+            smoke.advance("original-query-button-opens-localized-mercenary-skills");
+        }
+        42 if ready => {
             if let Some(parent) = smoke.path.parent() {
                 std::fs::create_dir_all(parent).unwrap();
             }
-            std::fs::write(&smoke.path,serde_json::to_vec_pretty(&serde_json::json!({
-                "status":"passed","checks":smoke.checks,"frames":smoke.frames,
-                "native_ui_picking":true,"mouse_messages_injected":true,"physical_pointer_tested":false,
-                "dead_guard_state_seeded":true,"tutorial_windows_dismissed_by_harness":true,"body_screenshot":smoke.path.parent().unwrap().join("body-carry.png")
-            })).unwrap()).unwrap();
+            std::fs::write(&smoke.path,serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","checks":smoke.checks,"frames":smoke.frames,"native_ui_picking":true,"mouse_messages_injected":true,"physical_pointer_tested":false,"dead_guard_state_seeded":true,"inventory_states_seeded":true,"tutorial_windows_dismissed_by_harness":true,"body_screenshot":smoke.path.parent().unwrap().join("body-carry.png")})).unwrap()).unwrap();
             world.write_message(AppExit::Success);
         }
         _ => {}

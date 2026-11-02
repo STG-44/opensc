@@ -416,6 +416,9 @@ pub fn input(
     let (Some(mut m), Some(mut p), Some(mut inv)) = (medical, p, inv) else {
         return;
     };
+    if inv.open && inv.view_member != 1 {
+        return;
+    }
     if p.carry_movement.is_some() {
         return;
     }

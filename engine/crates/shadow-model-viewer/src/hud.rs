@@ -63,6 +63,7 @@ pub struct Hud {
     injected: Vec<KeyCode>,
     pub command_posture: Option<crate::stance::Posture>,
     source: serde_json::Value,
+    pub inventory: Option<crate::inventory_ui::Appearance>,
 }
 #[derive(Component)]
 pub struct Diagnostic;
@@ -151,6 +152,7 @@ impl Hud {
             injected: Vec::new(),
             command_posture: None,
             source,
+            inventory: Some(crate::inventory_ui::Appearance::prepare(catalog)?),
         })
     }
     pub fn report(&self) -> serde_json::Value {
@@ -158,7 +160,10 @@ impl Hud {
     }
     #[allow(dead_code)] // Используется проверкой освобождения сцены в shadow-game.
     pub fn image_handles(&self) -> impl Iterator<Item = &Handle<Image>> {
-        self.textures.values().filter_map(|t| t.handle.as_ref())
+        self.textures
+            .values()
+            .filter_map(|t| t.handle.as_ref())
+            .chain(self.inventory.iter().flat_map(|a| a.image_handles()))
     }
     fn image(&self, name: &str, rect: Rect, canvas: Vec2) -> ImageNode {
         let t = &self.textures[name];
@@ -339,6 +344,9 @@ pub fn setup(
     let font = fonts.add(Font::from_bytes(
         include_bytes!("../../shadow-viewer/assets/fonts/DejaVuSans.ttf").to_vec(),
     ));
+    if let Some(a) = &mut h.inventory {
+        a.setup(&mut images, font.clone());
+    }
     for (piece, color) in [
         (Piece::Clock, Color::srgb(0.9, 0.65, 0.12)),
         (Piece::Tooltip, Color::srgb(0.85, 0.85, 0.7)),
@@ -395,8 +403,7 @@ pub fn input(
     let (Some(mut john), Some(mut party), Some(inv), Some(t)) = (john, party, inv, t) else {
         return;
     };
-    if inv.open
-        || t.active.is_some()
+    if t.active.is_some()
         || t.consumed_input
         || john.playback.paused
         || !mouse.just_pressed(MouseButton::Left)
@@ -410,6 +417,9 @@ pub fn input(
         return;
     };
     let id = button.0.as_str();
+    if inv.open && id != "b_inventory" {
+        return;
+    }
     if id == "r_member1" || id == "r_member2" {
         orbit.target = if id == "r_member1" {
             john.camera_target()
@@ -490,11 +500,7 @@ pub fn visuals(
     let fit = h.fit;
     for mut n in &mut roots {
         n.height = px(HEIGHT * fit.scale);
-        n.display = if inv.open {
-            Display::None
-        } else {
-            Display::Flex
-        };
+        n.display = Display::Flex;
     }
     let hover = buttons
         .iter()
@@ -505,6 +511,16 @@ pub fn visuals(
         .as_ref()
         .map(|g| radar_crop(orbit.target, extent(g), h.zoom));
     for (piece, mut node, image, text, font, bg) in &mut pieces {
+        let hide_in_inventory = inv.open
+            && match *piece {
+                Piece::Quad(i) => h.layout.quads[i].rect.min.x < fit.screen.x / fit.scale - 184.0,
+                Piece::Block(i) => h.layout.regions[i].min.x < fit.screen.x / fit.scale - 184.0,
+                Piece::Advice(i) => {
+                    h.layout.advice[i].rect.min.x < fit.screen.x / fit.scale - 184.0
+                }
+                Piece::Marker(_) | Piece::Clock => true,
+                Piece::Tooltip => false,
+            };
         match *piece {
             Piece::Quad(i) => {
                 *node = fit.node(h.layout.quads[i].rect);
@@ -610,6 +626,9 @@ pub fn visuals(
                 }
             }
         }
+        if hide_in_inventory {
+            node.display = Display::None;
+        }
     }
 }
 pub fn diagnostics(hud: Option<Res<Hud>>, mut nodes: Query<&mut Node, With<Diagnostic>>) {
@@ -653,6 +672,7 @@ mod tests {
             injected: vec![],
             command_posture: None,
             source: serde_json::Value::Null,
+            inventory: None,
         }
     }
     fn app(id: &str) -> App {
@@ -756,7 +776,7 @@ mod tests {
         assert!(keys.just_pressed(KeyCode::Escape));
     }
     #[test]
-    fn disabled_and_paused_commands_cannot_issue_game_actions() {
+    fn inventory_keeps_its_toggle_but_blocks_world_commands() {
         let mut app = app("b_reload");
         app.update();
         assert!(app.world().resource::<Hud>().injected.is_empty());
@@ -764,10 +784,21 @@ mod tests {
         app.world_mut().resource_mut::<Inventory>().open = true;
         app.update();
         assert!(
-            !app.world()
+            app.world()
                 .resource::<ButtonInput<KeyCode>>()
                 .just_pressed(KeyCode::Space)
         );
+        let mut app = self::app("b_crouch");
+        app.world_mut().resource_mut::<Inventory>().open = true;
+        app.update();
+        assert!(app.world().resource::<Hud>().injected.is_empty());
+        let mut app = self::app("b_inventory");
+        app.world_mut()
+            .resource_mut::<player::Player>()
+            .playback
+            .paused = true;
+        app.update();
+        assert!(app.world().resource::<Hud>().injected.is_empty());
     }
     #[test]
     fn radar_crop_uses_negative_world_z_and_clamps_at_map_edges() {

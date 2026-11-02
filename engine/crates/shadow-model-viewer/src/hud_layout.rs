@@ -62,7 +62,7 @@ fn rect(w: &[String], vars: &BTreeMap<String, f32>) -> Result<Rect> {
     Ok(Rect::from_corners(p, p + size))
 }
 /// Повторно вычисляется только при изменении размеров окна, без округления в 4:3.
-pub fn parse(lines: &[ConfigLine], screen: Vec2) -> Result<Layout> {
+pub fn window(lines: &[ConfigLine], screen: Vec2) -> Result<Layout> {
     if !screen.is_finite() || screen.min_element() < 720.0 {
         return Err("HUD: нужен современный экран HD или выше".into());
     }
@@ -108,7 +108,7 @@ pub fn parse(lines: &[ConfigLine], screen: Vec2) -> Result<Layout> {
                 if result.advice.iter().any(|a| a.id == w[1]) {
                     return Err("повтор кнопки HUD".into());
                 }
-                if w.len() == 9 && (w[6] != "7" || w[7] != "-1") {
+                if w.len() == 9 && (!matches!(w[6].as_str(), "7" | "10") || w[7] != "-1") {
                     return Err("неподдержанный атлас кнопки HUD".into());
                 }
                 result.advice.push(Advice {
@@ -232,6 +232,20 @@ pub fn parse(lines: &[ConfigLine], screen: Vec2) -> Result<Layout> {
             _ => return Err(format!("неподдержанное поле HUD: {}", w[0]).into()),
         }
         i += 1;
+    }
+    Ok(result)
+}
+/// Нижняя панель дополнительно требует геометрию портретов и команд.
+pub fn parse(lines: &[ConfigLine], screen: Vec2) -> Result<Layout> {
+    let mut result = window(lines, screen)?;
+    let mut vars = BTreeMap::new();
+    for line in lines {
+        if line.words[0] == "DEFINE_USER_IVAR" && line.words[1].starts_with("$commando_panel_") {
+            vars.insert(
+                line.words[1].clone(),
+                number(&line.words[2], &BTreeMap::new())?,
+            );
+        }
     }
     let field = |s: &str| vars.get(s).copied().ok_or("нет геометрии портретов HUD");
     result.face = Rect::from_corners(

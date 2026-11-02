@@ -24,7 +24,9 @@ pub struct Roster {
 #[derive(Component)]
 pub(crate) struct Panel;
 #[derive(Component)]
-pub(crate) struct Caption;
+pub(crate) struct Caption(pub u8, pub bool);
+#[derive(Component)]
+pub(crate) struct WeaponPicture(u8, bool);
 #[derive(Component)]
 pub(crate) struct Health(u8);
 #[derive(Debug)]
@@ -180,6 +182,12 @@ impl Roster {
             last_click: None,
         })
     }
+    pub fn image(&self, member: u8) -> ImageNode {
+        let p = &self.portraits[(member - 1) as usize];
+        ImageNode::new(p.handle.clone().expect("roster setup once"))
+            .with_rect(p.rect)
+            .with_mode(NodeImageMode::Stretch)
+    }
     pub fn report(&self) -> serde_json::Value {
         serde_json::json!({"portraits":self.portraits.iter().map(|p|&p.source).collect::<Vec<_>>()})
     }
@@ -244,24 +252,28 @@ pub fn setup(
             Pickable::IGNORE,
             ChildOf(button),
         ));
-        commands.spawn((
-            Caption,
-            Text::new(if i == 0 { "Джон" } else { "Джек" }),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(13.0 * hud.fit.scale),
-                ..default()
-            },
-            TextColor(Color::srgb(0.75, 0.85, 0.64)),
-            Pickable::IGNORE,
-            Node {
-                position_type: PositionType::Absolute,
-                top: percent(100),
-                margin: UiRect::top(px(8.0 * hud.fit.scale)),
-                ..default()
-            },
-            ChildOf(button),
-        ));
+        for secondary in [false, true] {
+            commands.spawn((
+                Caption(i as u8 + 1, secondary),
+                Text::default(),
+                TextFont {
+                    font: font.clone().into(),
+                    font_size: FontSize::Px(13.0 * hud.fit.scale),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.2, 1.0, 0.05)),
+                Pickable::IGNORE,
+                Node::default(),
+                ChildOf(button),
+            ));
+            commands.spawn((
+                WeaponPicture(i as u8 + 1, secondary),
+                ImageNode::default(),
+                Pickable::IGNORE,
+                Node::default(),
+                ChildOf(button),
+            ));
+        }
         let bar = commands
             .spawn((
                 Node {
@@ -331,7 +343,8 @@ pub fn input(
         if mouse.just_pressed(MouseButton::Right) {
             party.select(member, &mut john);
             mouse.reset(MouseButton::Right);
-            if member == 1 && !vehicle.as_ref().is_some_and(|v| v.occupied) {
+            if !vehicle.as_ref().is_some_and(|v| v.occupied) {
+                inv.view_member = member;
                 inv.open = true;
                 inv.cancel();
                 inv.consumed_input = true;
@@ -360,6 +373,16 @@ pub fn visuals(
     party: Option<Res<Party>>,
     inv: Option<Res<Inventory>>,
     medical: Option<Res<crate::medical::Medical>>,
+    grenade: Option<Res<crate::grenade::Grenade>>,
+    mut pictures: Query<
+        (&WeaponPicture, &mut Node, &mut ImageNode),
+        (
+            Without<Panel>,
+            Without<Caption>,
+            Without<Select>,
+            Without<Health>,
+        ),
+    >,
     mut panels: Query<
         &mut Node,
         (
@@ -367,6 +390,7 @@ pub fn visuals(
             Without<Select>,
             Without<Health>,
             Without<Caption>,
+            Without<WeaponPicture>,
         ),
     >,
     mut buttons: Query<
@@ -377,18 +401,32 @@ pub fn visuals(
             &mut BorderColor,
             &mut BackgroundColor,
         ),
-        (Without<Panel>, Without<Health>, Without<Caption>),
+        (
+            Without<Panel>,
+            Without<Health>,
+            Without<Caption>,
+            Without<WeaponPicture>,
+        ),
     >,
     mut captions: Query<
-        (&mut Node, &mut TextFont),
+        (&Caption, &mut Node, &mut TextFont, &mut Text),
         (
             With<Caption>,
             Without<Select>,
             Without<Panel>,
             Without<Health>,
+            Without<WeaponPicture>,
         ),
     >,
-    mut health: Query<(&Health, &mut Node), (Without<Caption>, Without<Select>, Without<Panel>)>,
+    mut health: Query<
+        (&Health, &mut Node),
+        (
+            Without<Caption>,
+            Without<Select>,
+            Without<Panel>,
+            Without<WeaponPicture>,
+        ),
+    >,
 ) {
     let (Some(h), Some(john), Some(party), Some(inv), Some(m)) = (hud, john, party, inv, medical)
     else {
@@ -442,9 +480,54 @@ pub fn visuals(
             Color::NONE
         };
     }
-    for (mut node, mut font) in &mut captions {
-        node.margin.top = px(8.0 * scale);
-        font.font_size = FontSize::Px(13.0 * scale);
+    for (caption, mut node, mut font, mut text) in &mut captions {
+        *node = Node {
+            position_type: PositionType::Absolute,
+            left: px(18.0 * scale),
+            top: px((h.layout.face.height() + if caption.1 { 22.0 } else { 7.0 }) * scale),
+            width: px(35.0 * scale),
+            height: px(15.0 * scale),
+            ..default()
+        };
+        font.font_size = FontSize::Px((13.0 * scale).max(11.0));
+        **text = if caption.0 != 1 {
+            String::new()
+        } else if caption.1 {
+            grenade
+                .as_ref()
+                .filter(|g| g.secondary && g.count > 0)
+                .map(|g| g.count.to_string())
+                .unwrap_or_default()
+        } else {
+            crate::inventory_ui::rounds(&inv, &john)
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        };
+    }
+    for (picture, mut node, mut image) in &mut pictures {
+        *node = Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px((h.layout.face.height() + if picture.1 { 22.0 } else { 7.0 }) * scale),
+            width: px(16.0 * scale),
+            height: px(13.0 * scale),
+            ..default()
+        };
+        let item = if picture.0 != 1 {
+            None
+        } else if picture.1 {
+            grenade
+                .as_ref()
+                .filter(|g| g.secondary && g.count > 0)
+                .map(|_| crate::inventory_ui::Item::Grenade)
+        } else {
+            inv.weapon(&john).map(crate::inventory_ui::Item::weapon)
+        };
+        if let (Some(item), Some(a)) = (item, h.inventory.as_ref()) {
+            *image = a.icon(item);
+        } else {
+            node.display = Display::None;
+        }
     }
     for (id, mut node) in &mut health {
         node.width = percent(if id.0 == 1 {

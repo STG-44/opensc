@@ -11,6 +11,8 @@ mod grenade;
 mod hud;
 mod hud_layout;
 mod inventory;
+mod inventory_ui;
+mod item_icon;
 mod localization;
 mod map_scene;
 mod medical;

@@ -150,16 +150,21 @@ pub(super) fn run(world: &mut World) {
         }
         2 if ready
             && state == Screen::Training
-            && text_entity(world, "JOHN EMERSON · Inventory").is_some() =>
+            && text_entity(world, "Inventory · Space: close").is_some() =>
         {
             audit(
                 world,
                 &mut smoke,
                 "english-seeded-inventory-medical-armor-and-grenade-labels",
             );
-            smoke.inventory_title = text_entity(world, "JOHN EMERSON · Inventory");
-            assert!(text_entity(world, "John · health 230/").is_some());
-            assert!(text_entity(world, "Body: flak jacket").is_some());
+            smoke.inventory_title = text_entity(world, "Inventory · Space: close");
+            assert!(text_entity(world, "JOHN EMERSON").is_some());
+            assert!(
+                world
+                    .query::<&crate::inventory_ui::ItemImage>()
+                    .iter(world)
+                    .any(|i| i.0 == crate::inventory_ui::Item::Armor)
+            );
             smoke.snapshot(world, "locale-en-inventory.png");
             action(world, Action::Pause);
             smoke.advance();
@@ -257,8 +262,8 @@ pub(super) fn run(world: &mut World) {
                 &mut smoke,
                 "dynamic-health-and-ammo-values-update-in-english",
             );
-            assert!(text_entity(world, "John · health 225/").is_some());
-            assert!(text_entity(world, "BDA: 7/").is_some());
+            assert_eq!(world.resource::<crate::medical::Medical>().health, 225.0);
+            assert!(world.query::<&Text>().iter(world).any(|t| t.0 == "7"));
             assert!(
                 Preferences::load(&world.resource::<Context>().settings_path)
                     .unwrap()
@@ -276,7 +281,7 @@ pub(super) fn run(world: &mut World) {
                 world
                     .query::<&TranslatedText>()
                     .iter(world)
-                    .all(|t| !t.source.starts_with("JOHN EMERSON ·"))
+                    .all(|t| !t.source.starts_with("Инвентарь · Space:"))
             );
             audit(world, &mut smoke, "training-widget-caches-are-cleaned-up");
             world.resource_mut::<Context>().notice =

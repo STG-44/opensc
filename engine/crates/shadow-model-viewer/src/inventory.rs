@@ -1,5 +1,5 @@
 //! Предметы учебного участка: нож, BDA и кусачки. Подбор не равен экипировке.
-use crate::ui_controls::{ButtonVisualState, UiButton};
+use crate::ui_controls::ButtonVisualState;
 use crate::{
     combat::Combat, map_scene::WORLD_SCALE, pickup, player, rig, scene, tutorial::Tutorial,
 };
@@ -210,6 +210,8 @@ pub struct Inventory {
     pub available: bool,
     pub ordered: bool,
     pub open: bool,
+    pub view_member: u8,
+    pub skills: bool,
     pub consumed_input: bool,
     pub drag: Option<Weapon>,
     pub shots: u32,
@@ -291,6 +293,8 @@ impl Inventory {
             available: false,
             ordered: false,
             open: false,
+            view_member: 1,
+            skills: false,
             consumed_input: false,
             drag: None,
             shots: 0,
@@ -413,6 +417,8 @@ impl Inventory {
         self.available = false;
         self.ordered = false;
         self.open = false;
+        self.view_member = 1;
+        self.skills = false;
         self.drag = None;
         self.position = None;
         self.center = None;
@@ -487,7 +493,7 @@ impl Inventory {
     }
     pub fn report(&self, actor: &player::Player) -> serde_json::Value {
         serde_json::json!({"owned_knife":self.owns_knife,"owned_uzi":self.owns_uzi,"uzi_rounds":self.uzi_rounds,"uzi_shots":self.uzi_shots,"uzi":self.uzi.as_ref().map(|g|&g.source),"owned_cutters":self.owns_cutters,"bda_available":self.available,"bda_collected":self.collected,"pickup_ordered":self.ordered,
-            "primary":self.weapon(actor).map(|w|w.name()),"rounds":self.rounds,"shots":self.shots,"open":self.open,"dragging":self.drag.map(|w|w.name()),
+            "primary":self.weapon(actor).map(|w|w.name()),"rounds":self.rounds,"shots":self.shots,"open":self.open,"view_member":self.view_member,"skills":self.skills,"dragging":self.drag.map(|w|w.name()),
             "drop_position_metres":self.position.map(|p|p.to_array()),"drop_center_metres":self.center.map(|p|p.to_array()),"gun":self.gun.source,
             "drop_placement_original_verified":false,"inventory_pause_original_verified":false,"reserve_ammunition":0,"reload_implemented":false})
     }
@@ -501,6 +507,10 @@ pub struct InventoryPanel;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     Primary,
+    Backpack,
+    Previous,
+    Next,
+    Skills,
     Stored(Weapon),
     Medical,
     Patient,
@@ -637,6 +647,10 @@ pub fn input(
     }
     if (keys.just_pressed(KeyCode::Space) || on_actor) && actor.selected {
         inv.open = !inv.open;
+        if inv.open {
+            inv.view_member = 1;
+        }
+        inv.skills = false;
         inv.drag = None;
         inv.consumed_input = true;
         keys.reset(KeyCode::Space);
@@ -656,6 +670,9 @@ pub fn input(
         keys.reset(KeyCode::Escape);
         return;
     }
+    if inv.view_member != 1 {
+        return;
+    }
     if actor.carry_movement.is_some() {
         inv.drag = None;
         inv.consumed_input = true;
@@ -670,7 +687,9 @@ pub fn input(
     if mouse.just_pressed(MouseButton::Left) {
         inv.drag = slots.iter().find_map(|(s, i)| {
             if *i == ButtonVisualState::Pressed {
-                if let Slot::Stored(w) = s {
+                if *s == Slot::Primary {
+                    inv.weapon(&actor)
+                } else if let Slot::Stored(w) = s {
                     inv.owns(*w).then_some(*w)
                 } else {
                     None
@@ -684,10 +703,16 @@ pub fn input(
         let target = slots
             .iter()
             .any(|(s, i)| *s == Slot::Primary && *i != ButtonVisualState::None);
-        if let Some(w) = inv.drag.take()
-            && target
-            && inv.equip(w, &mut actor)
-        {
+        let to_pack = slots
+            .iter()
+            .any(|(s, i)| *s == Slot::Backpack && *i != ButtonVisualState::None);
+        let dragged = inv.drag.take();
+        let unequipped = to_pack && dragged.is_some_and(|w| inv.weapon(&actor) == Some(w));
+        if unequipped {
+            actor.weapon = None;
+        }
+        let equipped = target && dragged.is_some_and(|w| inv.equip(w, &mut actor));
+        if equipped || unequipped {
             if let Some(mut c) = combat {
                 c.cancel_all(&mut actor);
             }
@@ -749,309 +774,7 @@ pub fn sync(
         };
     }
 }
-type PanelState = (
-    bool,
-    bool,
-    bool,
-    Option<Weapon>,
-    u32,
-    Option<Weapon>,
-    Option<u32>,
-    bool,
-    (bool, u32),
-    Option<(bool, u32, u32, bool)>,
-    Option<(bool, bool)>,
-);
-#[allow(clippy::too_many_arguments)] // Ресурсы и запросы Bevy.
-pub fn ui(
-    mut commands: Commands,
-    inv: Option<Res<Inventory>>,
-    actor: Option<Res<player::Player>>,
-    panels: Query<Entity, With<InventoryPanel>>,
-    camera: Single<Entity, With<crate::training::MapCamera>>,
-    mut fonts: ResMut<Assets<Font>>,
-    mut previous: Local<Option<PanelState>>,
-    grenade: Option<Res<crate::grenade::Grenade>>,
-    medical: Option<Res<crate::medical::Medical>>,
-    armor: Option<Res<crate::armor::Armor>>,
-) {
-    let (Some(inv), Some(actor)) = (inv, actor) else {
-        return;
-    };
-    let state = (
-        inv.open,
-        inv.owns_knife,
-        inv.collected,
-        inv.weapon(&actor),
-        inv.rounds,
-        inv.drag,
-        grenade.as_ref().map(|g| g.count),
-        inv.owns_cutters,
-        (inv.owns_uzi, inv.uzi_rounds),
-        medical
-            .as_ref()
-            .map(|m| (m.ground.collected, m.uses, m.health.to_bits(), m.armed)),
-        armor.as_ref().map(|a| (a.ground.collected, a.worn)),
-    );
-    if previous.as_ref() == Some(&state) && (!inv.open || !panels.is_empty()) {
-        return;
-    }
-    *previous = Some(state);
-    for e in &panels {
-        commands.entity(e).despawn();
-    }
-    if !inv.open {
-        return;
-    }
-    let font = fonts.add(Font::from_bytes(
-        include_bytes!("../../shadow-viewer/assets/fonts/DejaVuSans.ttf").to_vec(),
-    ));
-    let overlay = commands
-        .spawn((
-            player::SceneEntity,
-            InventoryPanel,
-            UiTargetCamera(*camera),
-            GlobalZIndex(300),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                top: px(0),
-                width: percent(100),
-                height: percent(100),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-        ))
-        .id();
-    let panel = commands
-        .spawn((
-            Node {
-                width: px(580),
-                padding: UiRect::all(px(24)),
-                row_gap: px(16),
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.025, 0.055, 0.045)),
-            ChildOf(overlay),
-        ))
-        .id();
-    let label = |commands: &mut Commands, parent: Entity, text: String, size: f32| {
-        commands.spawn((
-            Text::new(text),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(size),
-                ..default()
-            },
-            TextColor(Color::srgb(0.9, 0.94, 0.8)),
-            ChildOf(parent),
-        ));
-    };
-    label(
-        &mut commands,
-        panel,
-        "JOHN EMERSON · Инвентарь · пауза".into(),
-        21.0,
-    );
-    label(
-        &mut commands,
-        panel,
-        "Оружие: перетащить. Аптечка: ПКМ, затем ЛКМ по Джону.".into(),
-        16.0,
-    );
-    label(
-        &mut commands,
-        panel,
-        grenade
-            .as_ref()
-            .map(|g| {
-                if g.secondary {
-                    format!("Дополнительное: осколочная граната ×{}", g.count)
-                } else {
-                    "Дополнительное: нет".into()
-                }
-            })
-            .unwrap_or_default(),
-        18.0,
-    );
-    if let Some(m) = &medical {
-        let patient = commands
-            .spawn((
-                UiButton,
-                Slot::Patient,
-                Node {
-                    min_height: px(40),
-                    padding: UiRect::all(px(8)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.10, 0.22, 0.13)),
-                ChildOf(panel),
-            ))
-            .id();
-        label(
-            &mut commands,
-            patient,
-            format!(
-                "Джон · здоровье {:.0}/{:.0}{}",
-                m.health,
-                m.maximum,
-                if m.armed {
-                    " · ЛКМ: лечить"
-                } else {
-                    ""
-                }
-            ),
-            18.0,
-        );
-        if m.ground.collected {
-            let kit = commands
-                .spawn((
-                    UiButton,
-                    Slot::Medical,
-                    Node {
-                        min_height: px(40),
-                        padding: UiRect::all(px(8)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.25, 0.10, 0.10)),
-                    ChildOf(panel),
-                ))
-                .id();
-            label(
-                &mut commands,
-                kit,
-                format!("+ Аптечка · зарядов: {} · ПКМ: выбрать", m.uses),
-                18.0,
-            );
-        }
-    }
-    if let Some(a) = &armor {
-        let body = commands
-            .spawn((
-                UiButton,
-                Slot::BodyArmor,
-                Node {
-                    min_height: px(40),
-                    padding: UiRect::all(px(8)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.10, 0.18, 0.24)),
-                ChildOf(panel),
-            ))
-            .id();
-        let text = if a.worn {
-            "Тело: бронежилет · ЛКМ: снять"
-        } else if a.ground.collected {
-            "Тело: форма · ЛКМ: надеть бронежилет"
-        } else {
-            "Тело: форма"
-        };
-        label(&mut commands, body, text.into(), 18.0);
-    }
-    let primary = commands
-        .spawn((
-            UiButton,
-            Slot::Primary,
-            Node {
-                min_height: px(70),
-                padding: UiRect::all(px(14)),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.16, 0.28, 0.13)),
-            ChildOf(panel),
-        ))
-        .id();
-    label(
-        &mut commands,
-        primary,
-        format!(
-            "Основное оружие: {}",
-            inv.weapon(&actor).map(|w| w.name()).unwrap_or("нет")
-        ),
-        18.0,
-    );
-    let row = commands
-        .spawn((
-            Node {
-                column_gap: px(16),
-                row_gap: px(12),
-                flex_wrap: FlexWrap::Wrap,
-                ..default()
-            },
-            ChildOf(panel),
-        ))
-        .id();
-    for w in [Weapon::Knife, Weapon::Bda, Weapon::Cutters, Weapon::Uzi] {
-        if inv.owns(w) && inv.weapon(&actor) != Some(w) {
-            let button = commands
-                .spawn((
-                    UiButton,
-                    Slot::Stored(w),
-                    Node {
-                        width: px(230),
-                        min_height: px(65),
-                        padding: UiRect::all(px(14)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.13, 0.18, 0.16)),
-                    ChildOf(row),
-                ))
-                .id();
-            label(
-                &mut commands,
-                button,
-                if w == Weapon::Bda {
-                    format!("BDA · {}/{}", inv.rounds, inv.gun.magazine)
-                } else if w == Weapon::Uzi {
-                    format!(
-                        "UZI · {}/{}",
-                        inv.uzi_rounds,
-                        inv.uzi.as_ref().unwrap().magazine
-                    )
-                } else {
-                    w.name().into()
-                },
-                18.0,
-            );
-        }
-    }
-    label(
-        &mut commands,
-        panel,
-        format!(
-            "{}{}",
-            if inv.collected {
-                format!(
-                    "BDA: {}/{} патронов · запасных: 0",
-                    inv.rounds, inv.gun.magazine
-                )
-            } else {
-                "BDA ещё не подобран".into()
-            },
-            inv.drag
-                .map(|w| format!("\nПеренос: {} → основной слот", w.name()))
-                .unwrap_or_default()
-        ),
-        16.0,
-    );
-    let close = commands
-        .spawn((
-            UiButton,
-            Slot::Close,
-            Node {
-                align_self: AlignSelf::FlexEnd,
-                padding: UiRect::axes(px(22), px(8)),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.18, 0.27, 0.16)),
-            ChildOf(panel),
-        ))
-        .id();
-    label(&mut commands, close, "Закрыть".into(), 16.0);
-}
+pub use crate::inventory_ui::ui;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1085,6 +808,8 @@ pub(crate) mod tests {
             available: true,
             ordered: false,
             open: false,
+            view_member: 1,
+            skills: false,
             consumed_input: false,
             drag: None,
             shots: 0,
@@ -1271,6 +996,36 @@ pub(crate) mod tests {
                 .resource::<ButtonInput<KeyCode>>()
                 .just_pressed(KeyCode::Escape)
         );
+    }
+    #[test]
+    fn dragging_primary_to_pack_preserves_ammo_and_cancels_movement() {
+        let mut app = ui_app();
+        {
+            let mut inv = app.world_mut().resource_mut::<Inventory>();
+            inv.open = true;
+            inv.drag = Some(Weapon::Bda);
+        }
+        {
+            let mut actor = app.world_mut().resource_mut::<player::Player>();
+            actor.weapon = Some("bda".into());
+            actor.destination = Some(Vec3::X);
+        }
+        app.world_mut()
+            .spawn((Slot::Backpack, ButtonVisualState::Hovered));
+        {
+            let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            mouse.press(MouseButton::Left);
+            mouse.clear_just_pressed(MouseButton::Left);
+            mouse.release(MouseButton::Left);
+        }
+        app.update();
+        let actor = app.world().resource::<player::Player>();
+        let inv = app.world().resource::<Inventory>();
+        assert!(actor.weapon.is_none());
+        assert!(actor.destination.is_none());
+        assert_eq!(inv.rounds, 7);
+        assert!(inv.collected);
+        assert!(inv.drag.is_none());
     }
     #[test]
     fn ui_release_outside_primary_keeps_weapon_and_ammo() {

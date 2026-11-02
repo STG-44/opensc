@@ -371,6 +371,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             crate::selection::input,
             crate::hud::input,
             crate::roster::input,
+            crate::inventory_ui::input,
         )
             .chain()
             .run_if(in_state(Screen::Training))
@@ -436,7 +437,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             )
                 .chain(),
             crate::tutorial::ui,
-            (crate::inventory::ui, crate::body_carry::ui).chain(),
+            (
+                crate::inventory::ui,
+                crate::inventory_ui::hover,
+                crate::body_carry::ui,
+            )
+                .chain(),
             crate::pickup::ring,
             training::update_markers,
             (

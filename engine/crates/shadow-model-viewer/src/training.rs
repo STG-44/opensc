@@ -470,6 +470,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                         crate::selection::input,
                         crate::hud::input,
                         crate::roster::input,
+                        crate::inventory_ui::input,
                         crate::evacuation::input,
                     )
                         .chain(),
@@ -529,7 +530,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     )
                         .chain(),
                     tutorial::ui,
-                    (inventory::ui, crate::body_carry::ui).chain(),
+                    (
+                        inventory::ui,
+                        crate::inventory_ui::hover,
+                        crate::body_carry::ui,
+                    )
+                        .chain(),
                     pickup::ring,
                     update_markers,
                     (

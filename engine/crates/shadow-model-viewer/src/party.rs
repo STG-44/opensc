@@ -988,7 +988,14 @@ pub fn native_smoke(
             s.stage = 7;
         }
         7 if s.frames > 2 => {
-            assert!(!inv.open, "Jack opened John's inventory");
+            assert!(
+                inv.open && inv.view_member == 2,
+                "Jack must see his own inventory"
+            );
+            keys.press(KeyCode::Escape);
+            s.stage = 77;
+        }
+        77 if !inv.open => {
             let goal = s.goal;
             if click_world(goal, &mut party, &mut mouse) {
                 s.stage = 8;
@@ -1002,7 +1009,7 @@ pub fn native_smoke(
             );
             assert!((john.position - s.john).length() < 0.001);
             equipment_ok(&john);
-            s.checks.push(serde_json::json!({"independent_jack_mouse_movement":true,"john_equipment_preserved":true,"jack_cannot_open_john_inventory":true}));
+            s.checks.push(serde_json::json!({"independent_jack_mouse_movement":true,"john_equipment_preserved":true,"jack_inventory_is_separate":true}));
             for (button, mut state) in &mut buttons {
                 if button.0 == 1 {
                     *state = ButtonVisualState::Pressed;

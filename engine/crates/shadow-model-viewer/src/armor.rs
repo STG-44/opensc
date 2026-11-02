@@ -284,6 +284,9 @@ pub fn input(
     let (Some(mut a), Some(mut p), Some(mut inv)) = (a, p, inv) else {
         return;
     };
+    if inv.open && inv.view_member != 1 {
+        return;
+    }
     if p.carry_movement.is_some() {
         return;
     }

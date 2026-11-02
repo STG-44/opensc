@@ -670,6 +670,8 @@ pub fn native_smoke(
             Step::Portrait(1, 1),
             Step::Portrait(2, 3),
             Step::Check(Check::Mask(2)),
+            Step::Check(Check::Inventory(true)),
+            Step::Key(KeyCode::Space),
             Step::Check(Check::Inventory(false)),
             Step::Portrait(1, 3),
             Step::Check(Check::Inventory(true)),
@@ -830,7 +832,7 @@ pub fn native_smoke(
                     assert!(orbit.target.distance(p) < 0.001);
                 }
                 Check::Hud => {
-                    assert_eq!(hud.image_handles().count(), 3);
+                    assert_eq!(hud.image_handles().count(), 13);
                     assert_eq!(hud.layout.regions.len(), 3);
                     assert_eq!(hud.layout.advice.len(), 18);
                     assert!(!hud.diagnostics);
