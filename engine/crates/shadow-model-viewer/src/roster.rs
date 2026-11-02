@@ -256,6 +256,7 @@ pub fn setup(
             commands.spawn((
                 Caption(i as u8 + 1, secondary),
                 Text::default(),
+                bevy::text::LineHeight::RelativeToFont(1.0),
                 TextFont {
                     font: font.clone().into(),
                     font_size: FontSize::Px(13.0 * hud.fit.scale),
@@ -280,9 +281,9 @@ pub fn setup(
                     position_type: PositionType::Absolute,
                     left: px(0),
                     top: percent(100),
-                    margin: UiRect::top(px(3.0 * hud.fit.scale)),
+                    margin: UiRect::top(px(0)),
                     width: percent(100),
-                    height: px(3.0 * hud.fit.scale),
+                    height: px(2.0 * hud.fit.scale),
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
@@ -484,9 +485,9 @@ pub fn visuals(
         *node = Node {
             position_type: PositionType::Absolute,
             left: px(18.0 * scale),
-            top: px((h.layout.face.height() + if caption.1 { 22.0 } else { 7.0 }) * scale),
+            top: px((h.layout.face.height() + if caption.1 { 17.0 } else { 3.0 }) * scale),
             width: px(35.0 * scale),
-            height: px(15.0 * scale),
+            height: px(14.0 * scale),
             ..default()
         };
         font.font_size = FontSize::Px((13.0 * scale).max(11.0));
@@ -508,7 +509,7 @@ pub fn visuals(
         *node = Node {
             position_type: PositionType::Absolute,
             left: px(0),
-            top: px((h.layout.face.height() + if picture.1 { 22.0 } else { 7.0 }) * scale),
+            top: px((h.layout.face.height() + if picture.1 { 17.0 } else { 3.0 }) * scale),
             width: px(16.0 * scale),
             height: px(13.0 * scale),
             ..default()

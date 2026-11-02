@@ -102,15 +102,38 @@ fn snapshot(world: &mut World, smoke: &Smoke, name: &str) {
         .observe(save_to_disk(smoke.path.parent().unwrap().join(name)));
 }
 fn primary_ammo(world: &mut World) -> String {
-    world
-        .query::<(&crate::roster::Caption, &Text)>()
+    let screen = world
+        .query::<&Window>()
+        .single(world)
+        .unwrap()
+        .resolution
+        .size();
+    let mut primary = None;
+    for (caption, text, node, transform) in world
+        .query::<(
+            &crate::roster::Caption,
+            &Text,
+            &ComputedNode,
+            &UiGlobalTransform,
+        )>()
         .iter(world)
-        .find(|(c, _)| c.0 == 1 && !c.1)
-        .expect("John primary ammo caption")
-        .1
-        .0
-        .clone()
+    {
+        if caption.0 != 1 || text.0.is_empty() {
+            continue;
+        }
+        let (_, _, center) = transform.to_scale_angle_translation();
+        let max = (center + node.size() * 0.5) * node.inverse_scale_factor();
+        assert!(
+            max.x <= screen.x + 0.5 && max.y <= screen.y + 0.5,
+            "portrait weapon/ammunition row clipped by window: {max:?}/{screen:?}"
+        );
+        if !caption.1 {
+            primary = Some(text.0.clone());
+        }
+    }
+    primary.expect("John primary ammo caption")
 }
+
 pub(super) fn run(world: &mut World) {
     let mut smoke = world.remove_resource::<Smoke>().unwrap();
     smoke.frames += 1;

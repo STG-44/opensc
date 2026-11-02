@@ -500,8 +500,10 @@ pub fn draw(
         ("r_head", Rect::new(0., 85., 64., 126.)),
         ("r_body", Rect::new(64., 85., 128., 126.)),
     ] {
+        let mut silhouette = a.texture("invntry_background1.bmp", uv, Vec2::splat(128.0));
+        silhouette.color = Color::srgba(0.5, 0.5, 0.5, 0.7);
         commands.spawn((
-            a.texture("invntry_background1.bmp", uv, Vec2::splat(128.0)),
+            silhouette,
             fit.node(r(name)),
             Pickable::IGNORE,
             ChildOf(parent),
@@ -574,7 +576,7 @@ pub fn draw(
                     ..fit.node(cell_rect)
                 },
                 BorderColor::all(Color::srgba(0.2, 0.29, 0.14, 0.7)),
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.94)),
             ));
         }
     }
@@ -823,7 +825,7 @@ pub fn hover(
             hint = Some(h.0.clone());
         } else {
             bg.0 = if *slot == Slot::Backpack {
-                Color::srgba(0., 0., 0., 0.7)
+                Color::srgba(0., 0., 0., 0.94)
             } else {
                 Color::NONE
             };
