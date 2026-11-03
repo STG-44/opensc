@@ -24,7 +24,7 @@ impl Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let source = format!("http://{}/manifest.json", listener.local_addr().unwrap());
-        let data = b"UI updater test; never executed";
+        let data = b"# OpenSC updater test fixture\nexit 0\n";
         let release = Arc::new(Mutex::new(Release {
             version: "ui-test-1".into(),
             notes: "Test release".into(),
@@ -190,6 +190,28 @@ fn ready_data(app: &mut Launcher) {
     });
 }
 
+// Platforms can reject this non-native fixture at spawn or return a short-lived
+// child. Both paths must follow verification and activation.
+fn assert_fixture_launch(app: &mut Launcher) {
+    assert!(!app.pending_play);
+    assert!(app.root.join("engine.log").is_file());
+    if let Some(mut child) = app.child.take() {
+        let _ = child.wait().unwrap();
+    } else {
+        assert!(
+            app.error
+                .as_ref()
+                .is_some_and(|e| e.contains("Не удалось запустить движок"))
+                || app
+                    .activity
+                    .iter()
+                    .any(|a| a.starts_with("Движок завершился:")),
+            "{:?}",
+            app.error
+        );
+    }
+}
+
 #[test]
 fn play_rechecks_and_installs_latest_before_attempting_to_execute_it() {
     let server = Server::new();
@@ -206,9 +228,7 @@ fn play_rechecks_and_installs_latest_before_attempting_to_execute_it() {
     assert_eq!(server.downloads.load(Ordering::Relaxed), 2);
     assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-2");
     assert!(!app.pending_play);
-    // The fixture is deliberately not executable code. Reaching this error proves
-    // launch was attempted only after the new verified release became active.
-    assert!(app.error.is_some() && app.child.is_none());
+    assert_fixture_launch(&mut app);
 }
 
 #[test]
@@ -375,14 +395,7 @@ fn a_failed_play_check_can_use_the_verified_cached_release_of_the_same_channel()
     server.unavailable.store(true, Ordering::Relaxed);
     app.request_play(&ctx);
     settle(&mut app, &ctx);
-    assert!(
-        app.error
-            .as_ref()
-            .unwrap()
-            .contains("Не удалось запустить движок"),
-        "{:?}",
-        app.error
-    );
+    assert_fixture_launch(&mut app);
     assert_eq!(server.checks.load(Ordering::Relaxed), 2);
     assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
     assert_eq!(
