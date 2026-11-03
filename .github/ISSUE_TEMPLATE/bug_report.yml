@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible engine or launcher problem.
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Engine and launcher versions
+      placeholder: "Engine 0.1.0-test.… / Launcher 0.4.1"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system, architecture and GPU
+      placeholder: "CachyOS x86-64, GPU model, Vulkan"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the mission, character or object and relevant settings.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, video or relevant log excerpt
+      description: Please exclude passwords, personal data and original game archives.

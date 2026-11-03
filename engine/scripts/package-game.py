@@ -65,8 +65,10 @@ def source_hashes():
 
 def notices(metadata, destination):
     """Carry dependency declarations and their supplied license/notice files."""
-    text = ["OpenSC engine: third-party notices\n",
-            "Dependency metadata for the selected native target.\n"]
+    text = ["OpenSC engine: project and third-party notices\n",
+            "\nOpenSC project source — MIT License\n",
+            (PROJECT / "LICENSE").read_text(encoding="utf-8"),
+            "\nDependency metadata for the selected native target.\n"]
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
         if package["source"] is None:
             continue
