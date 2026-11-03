@@ -112,7 +112,10 @@ impl Appearance {
                 if all[i..end].iter().any(|l| {
                     l.words.first().is_some_and(|v| v == "GEOMETRY_TEXTURE")
                         && l.words.get(1).is_some_and(|v| {
-                            matches!(v.as_str(), "invntry1_ck.bmp" | "simu3_ck.bmp")
+                            matches!(
+                                v.as_str(),
+                                "invntry1_ck.bmp" | "simu3_ck.bmp" | "screen_black.bmp"
+                            )
                         })
                 }) {
                     lines.extend_from_slice(&all[i..end]);
@@ -414,6 +417,8 @@ pub fn draw(
                 uv.max.x = uv.min.x + q.rect.width();
             }
             node.insert(a.texture(&q.texture, uv, q.canvas));
+        } else if q.texture == "screen_black.bmp" {
+            node.insert(BackgroundColor(Color::srgba(0., 0., 0., 0.94)));
         }
     }
     let face = button(
@@ -501,7 +506,7 @@ pub fn draw(
         ("r_body", Rect::new(64., 85., 128., 126.)),
     ] {
         let mut silhouette = a.texture("invntry_background1.bmp", uv, Vec2::splat(128.0));
-        silhouette.color = Color::srgba(0.5, 0.5, 0.5, 0.7);
+        silhouette.color = Color::srgba(0.5, 0.5, 0.5, 1.0);
         commands.spawn((
             silhouette,
             fit.node(r(name)),
