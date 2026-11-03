@@ -202,10 +202,18 @@ fn verify_world_props(world: &mut World, smoke: &mut Smoke) {
             .checks
             .push(format!("original-{tag}-mesh-blocks-character-sweep"));
     }
-    let (_, _, low, high, matrix) = objects
+    let (target_id, _, low, high, matrix) = objects
         .iter()
         .find(|(_, name, _, _, _)| name.contains("granitecrate") && !name.contains("dam"))
         .expect("GRANITE crate");
+    let others = world
+        .query::<(Entity, &crate::pickup::MapObject)>()
+        .iter(world)
+        .filter_map(|(entity, object)| (object.0 != *target_id).then_some(entity))
+        .collect::<Vec<_>>();
+    for entity in others {
+        world.entity_mut(entity).insert(Visibility::Hidden);
+    }
     let normal = matrix.transform_vector3(-Vec3::Z).normalize();
     let mut orbit = world.resource_mut::<training::Orbit>();
     orbit.target = (*low + *high) * 0.5;
