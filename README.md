@@ -1,134 +1,97 @@
 # OpenSC — Open Shadow Company
 
-Репозиторий: [STG-44/opensc](https://github.com/STG-44/opensc).
+A modern **Rust + Bevy** reimplementation of **Shadow Company: Left for Dead**,
+with a native launcher and an update server. OpenSC reads the player's original
+resources and supports replacement assets through the same catalog.
 
-Сайт и загрузки: [shadow-test.zaikinagroup.ru](https://shadow-test.zaikinagroup.ru/).
+[Download & install](https://shadow-test.zaikinagroup.ru/) · [Engine](engine/README.md) ·
+[Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Русский](README.ru.md)
 
-Нативный лаунчер на **Rust** для проекта нового движка **Shadow Company: Left for Dead**. Исходный код поддерживает macOS (Intel / Apple Silicon), Windows x64 и Linux x64. Движок на Rust + Bevy 0.20 находится в `engine/`; сервер обновлений — в `server/`. Лаунчер и движок выпускаются отдельными пакетами.
+**Status:** a playable training prototype. The complete campaign and full
+compatibility with the original executable are still in development. You need
+your own original game installation or disc image; original archives are not
+included in engine updates. Current gameplay work is tracked in
+[PR #2](https://github.com/STG-44/opensc/pull/2); see the engine guide before
+building the active development branch.
 
-## Что работает
+## Play
 
-- Автоматический импорт оригинальных ресурсов из папки игры, MDF/MDS и ISO в постоянную библиотеку OpenSC; исходные файлы сохраняются. [Поддерживаемые форматы и каталоги](docs/IMPORTING-RU.md).
-- Инвентаризация файлов без изменения оригинала и без запуска старого `shadow.exe`.
-- Проверка обновлений на `https://shadow-test.zaikinagroup.ru/updates/manifest-v1.json`.
-- Загрузка сборки под текущую систему и общего пакета ресурсов; проверка размера и SHA-256 каждого файла.
-- Установка в новую папку версии. Активная версия переключается после полной загрузки и проверки. Ошибка загрузки и отмена сохраняют предыдущую активную сборку.
-- Запуск установленного движка отдельным процессом, журнал `engine.log`, проверка установленных файлов.
-- Корректное состояние «сборки ещё не опубликованы», когда сервер возвращает 404 или `release: null`.
+1. Download the launcher for your system from the [project website](https://shadow-test.zaikinagroup.ru/).
+2. Choose your original game folder, **MDF/MDS**, or **ISO**. Supported data is
+   copied automatically into OpenSC's managed library.
+3. Let the launcher install the engine, then select **Play → Training**.
 
-В `engine/` перенесён текущий прототип: оригинальные меню и видео, учебная карта, бойцы, предметы, бой, машина, спасение Джека, эвакуация и нижний HUD. Полная кампания и часть механик ещё разрабатываются. Игрок указывает свою установку оригинала; оригинальные архивы не публикуются.
+Launcher **0.4.1** checks for engine updates automatically. Game data, settings
+and overrides stay separate from versioned engine installations. Launcher
+self-updates use a signed channel; older launchers may need one manual upgrade.
+[Import details — Russian](docs/IMPORTING-RU.md).
 
-Лаунчер **0.4.1** автоматически импортирует оригинальную игру из папки, MDF/MDS или ISO и получает обновления движка. Тестовый движок — **0.1.0-test.20261103.1**: нижний инвентарь по оригиналу, оружие и патроны под портретами, сохранение бега при взаимодействиях и столкновения с предметами. Настройки, копия оригинальных данных и улучшения хранятся отдельно от обновляемых версий. [Проверки и порядок выпуска](docs/ENGINE-INTEGRATION-RU.md). Исторические проверки 0.2.0 ниже относятся к прежнему выпуску.
+## Current features
 
-Выпуск 0.2.0 прошёл [GitHub Actions Build launcher #4](https://github.com/STG-44/opensc/actions/runs/38971704860): тесты, Clippy без предупреждений, release-сборки и проверки установщиков на всех четырёх платформах. DMG проверяется монтированием и запуском приложения, Windows Setup — тихой установкой, запуском и удалением; Linux — запуском AppImage, распаковкой DEB и установкой/удалением Arch-пакета через pacman в контейнере. На этом Mac Intel также прошли 9 интеграционных тестов, проверка окна по снимку и локальная проверка DMG. Ручная работа с графическим окном на Windows и Linux отдельно не проверялась.
+| Area | Implementation |
+| --- | --- |
+| Original resources | GUT archives, SMF models, BMF animation, MTF placement, PCX terrain and textures |
+| Menus | Animated backgrounds and buttons, Unicode fonts, Russian/English UI, AVI playback with sound |
+| Tactical controls | John and recruited Jack, selection, stances, group movement and obstacle detours |
+| Training | Weapons and items, medical kit, armor, body carrying, fences, gates, Hummer and evacuation |
+| Inventory | Original panel layout, equipment, backpack grid, ammunition indicators and skills |
+| Radar | Live team markers, detected enemies, camera footprint, map lock/rotation, zoom and dragging |
+| Visibility | Shared team sight, terrain/scenery occlusion and persistent radar exploration |
+| Delivery | Verified versioned downloads, automatic updates and a private bug-report service |
 
-Обновляющий клиент ранее проверен полной установкой локального тестового выпуска через HTTP: движок, пакет ресурсов и имена файлов с пробелами и `#`.
+The renderer uses Bevy's **wgpu** backend; Vulkan is verified on Linux.
+The UI supports modern **16:9 and 21:9** windows starting at **1280×720**.
 
-## Сборка и запуск
+## Platforms
 
-Нужен Rust 1.99 или новее. Версии зависимостей закреплены в `Cargo.lock`.
+| Component | Build targets |
+| --- | --- |
+| Engine | Linux x86-64 / ARM64, Windows x86-64, macOS Intel / Apple Silicon |
+| Launcher | Linux x86-64, Windows x86-64, macOS Intel / Apple Silicon |
+| Update/report server | Linux container |
 
-```sh
-cargo run --locked
-cargo test --locked
-cargo clippy --all-targets -- -D warnings
-cargo build --release --locked
+[Engine CI](https://github.com/STG-44/opensc/actions/workflows/engine.yml) builds
+and checks all five engine targets. Native rendering and injected mouse/UI
+scenarios are exercised on Linux; Windows and macOS still need hands-on
+rendering checks. Current Linux engine packages target glibc 2.35+, while
+launcher packages require glibc 2.39+. Compatibility with every distribution
+and musl-based systems is not yet guaranteed.
+
+## Repository
+
+| Path | Purpose |
+| --- | --- |
+| [`engine/`](engine/README.md) | Rust **1.99.0**, Bevy **0.20.0**, resource readers, tools and game runtime |
+| [`src/`](src/) | Native launcher, original-data import and update client |
+| [`server/`](server/README.md) | Rust/Axum file delivery and private SQLite bug reports |
+| [`crates/report-protocol/`](crates/report-protocol/) | Shared report validation |
+| [`scripts/`](scripts/) | Packaging, release checks and installers |
+| [`deploy/`](deploy/README.md) | Website and deployment references |
+
+```mermaid
+flowchart LR
+    Original[Player's original data] --> Catalog[Asset catalog]
+    Overrides[Replacement assets] --> Catalog
+    Catalog --> Engine[Bevy game runtime]
+    Server[Update server] --> Launcher[OpenSC launcher]
+    Launcher --> Engine
 ```
 
-На Linux нужны библиотеки X11/Wayland, OpenGL и системный портал выбора файлов (`xdg-desktop-portal` и компонент для используемого рабочего стола). Пакеты для сборки перечислены в `.github/workflows/build.yml`.
+Start with the [contributor guide](CONTRIBUTING.md) and
+[radar, visibility and navigation](engine/docs/TACTICAL-SYSTEMS.md).
+Detailed implementation/research notes remain in the [Russian engine guide](engine/README.ru.md).
 
-Открыть лаунчер с заранее выбранной папкой:
+## Report a problem
 
-```sh
-cargo run --locked -- --data "/путь/к/Shadow Company/Data"
-```
+Use the launcher's report function or [open an issue](https://github.com/STG-44/opensc/issues/new/choose).
+Include the engine/launcher version, platform, reproduction steps and expected
+result. A screenshot or short video helps with rendering and UI problems.
 
-Настройки и сборки сохраняются в стандартной папке данных приложения: `~/Library/Application Support/OpenSC` на macOS, `%LOCALAPPDATA%/OpenSC` на Windows, `$XDG_DATA_HOME/opensc` или `~/.local/share/opensc` на Linux. Для изолированного тестирования используй переменную `OPENSC_HOME`.
+## Attribution and licensing
 
-Команды без окна: `--check [URL]`, `--install [URL]`, `--verify`, `--launch [папка]`, `--inspect <папка>`, `--import <папка или образ>`, `--help`.
+OpenSC is an independent recreation, not an official or endorsed release.
+Original game data and trademarks belong to their respective owners.
+Dependency and font notices are included in packaged builds.
 
-## Подключение движка
-
-Лаунчер ожидает отдельный исполняемый файл с интерфейсом:
-
-```text
-shadow-game --game-dir "/абсолютный/путь/к/Data" --settings "/папка/OpenSC/game/settings.json" --overrides "/папка/OpenSC/overrides"
-```
-
-Запуск выполняется из папки установленной версии. Контракт подключён в `Installed::launch` в `src/updater.rs`. Движок также принимает `--data` для совместимости с лаунчером 0.2.0. Библиотеки и дополнительные файлы движка можно перечислить в манифесте рядом с исполняемым файлом.
-
-## Подготовка выпуска для существующего сервера
-
-Пример подготовки общего выпуска после получения настоящих сборок движка:
-
-```sh
-python3 scripts/publish_release.py \
-  --version 0.1.0 \
-  --package macos-x86_64=/путь/к/пакету/macos \
-  --package windows-x86_64=/путь/к/пакету/windows \
-  --package linux-x86_64=/путь/к/пакету/linux \
-  --output /путь/к/новой/папке-выпуска
-```
-
-`--package` принимает результат `engine/scripts/package-game.py`: движок, сведения о сборке, управление и лицензии зависимостей. Перед копированием сверяются платформа, состав и контрольные суммы. Пакет с дополнительными файлами, включая оригинальные `.gut`, отклоняется. Папка оригинала выбирается на компьютере игрока.
-
-В существующую папку раздачи `/updates/` сначала загружается `releases/`, после полной загрузки атомарно заменяется `manifest-v1.json`. Для статуса до первого выпуска готов файл `deploy/updates/manifest-v1.json`. Новый DNS и отдельная запись для `/updates/` не нужны. Настройки работающего Traefik менять не требуется.
-
-Лаунчер принимает HTTPS и файлы с того же сервера; HTTP разрешён только для локального тестового сервера. При перенаправлениях сохраняется тот же сервер. Манифест определяет пути файлов, но не команды оболочки. SHA-256 проверяет целостность; доверие к выпуску основано на HTTPS и доступе к серверу. Манифест движка пока не имеет отдельной подписи. Обновления самого лаунчера проверяются подписью Ed25519; версии до 0.4.0 требуют одного ручного обновления.
-
-## Установщики для трёх систем
-
-Workflow `.github/workflows/build.yml` запускает тесты и создаёт установщики и переносимые архивы для четырёх платформ. [Запуски и результаты сборок](https://github.com/STG-44/opensc/actions/workflows/build.yml) доступны в GitHub Actions, готовые файлы — в Artifacts успешного запуска.
-
-| Система | Основной формат | Дополнительно |
-| --- | --- | --- |
-| macOS Intel / Apple Silicon | DMG с приложением и ссылкой на Applications | ZIP с `.app` |
-| Windows x64 | Setup.exe, установка для текущего пользователя, удаление через настройки Windows | ZIP |
-| CachyOS / Arch Linux x64 | `.pkg.tar.zst` для pacman | AppImage, tar.gz |
-| Современный Linux x64 | AppImage | DEB для Debian/Ubuntu, tar.gz |
-
-Минимум для готовых Linux-сборок — glibc 2.39; графические библиотеки X11/Wayland и OpenGL должны быть установлены. AppImage может потребовать FUSE 2; режим `--appimage-extract-and-run` работает без FUSE. Для CachyOS: `sudo pacman -U opensc-launcher-0.4.1-linux-x86_64.pkg.tar.zst`. Пакет называется `opensc-launcher`, чтобы не пересекаться с системным пакетом OpenSC для смарт-карт.
-
-Локальная упаковка готового исполняемого файла:
-
-```sh
-cargo metadata --locked --format-version 1 --filter-platform x86_64-apple-darwin > launcher-metadata.json
-python3 scripts/package_launcher.py \
-  --cargo-metadata launcher-metadata.json \
-  --binary target/release/opensc-launcher \
-  --platform macos-x86_64 \
-  --output dist --installers
-```
-
-Установщики создаются на соответствующей системе: macOS использует `sips`, `iconutil`, `codesign`, `hdiutil`; Windows — Inno Setup 6; Linux — `dpkg-deb`, GNU tar, zstd и appimagetool с закреплённым SHA-256. Без `--installers` создаётся только переносимый архив. `scripts/test_installers.py` проверяет установку в изолированном временном каталоге; CI дополнительно устанавливает и удаляет Arch-пакет через pacman в контейнере.
-
-macOS-пакет имеет ad-hoc подпись без Developer ID и нотариализации Apple, Windows-пакет не подписан. Это тестовые сборки; системная защита может ограничить первый запуск. Игровой движок и данные, необходимые для игры, поставляются отдельно. Для оформления использована карта из переданных ресурсов игры; значок OpenSC создан в проекте (`scripts/make_icons.py`).
-
-## Страница загрузки
-
-`deploy/site/index.html` — исходник страницы загрузок с установщиками, переносимыми архивами, контрольными суммами и инструкциями начала работы. Карта и реальный снимок окна находятся в `deploy/site/assets/`. Подготовка файлов и порядок публикации описаны в [deploy/README.md](deploy/README.md). Двоичные файлы из `deploy/site/downloads/` не хранятся в Git. `deploy/updates/manifest-v1.json` — шаблон для пустого сервера; активный опубликованный манифест формируется из проверенных пакетов CI.
-
-## Сервер сайта на Rust
-
-С 18 октября 2026 года сайт обслуживает отдельный сервис **Rust + Axum**, код и описание — в [server/README.md](server/README.md). Traefik принимает HTTPS и применяет внешний лимит, Axum проверяет клиента и раздаёт файлы. Для багрепортов используется приватная SQLite с резервным копированием. Сервер собирается независимо от лаунчера.
-
-Реализованы отдельные лимиты страниц, обновлений и скачиваний, ограничение активных передач, временная блокировка сканеров, проверка доверенного прокси и защитные HTTP-заголовки. Запросы лаунчера к манифесту работают без браузера и капчи. На сайте опубликованы `istg44@gmail.com` и ссылка на публичный профиль `STG-44`.
-
-[Build web server #2](https://github.com/STG-44/opensc/actions/runs/39115779194) успешно проверил 13 тестов, Clippy, статическую Linux-сборку и контейнер без root-прав. Исходный коммит сервера — `26046f6f99a3cfa070746c2579b995db1436117b`. Ограничения не заменяют сетевую защиту от распределённой атаки; User-Agent можно подделать.
-
-## История площадки
-
-Обновлено 17 октября 2026 года: на `shadow-test.zaikinagroup.ru` опубликованы новый сайт и лаунчер 0.2.0 — десять установщиков и архивов с SHA-256. Исходный коммит сборок — `b9813dadda27117e2ca607ea979d1bde8a1029d1`. Старые архивы 0.1.0 сохранены. `/updates/manifest-v1.json` содержит `release: null`, потому что движок будет подключён позже. Перед обновлением сохранена резервная копия текущей раздачи. Конфигурация Traefik и настройки DNS не менялись.
-
-18 октября 2026 года маршрут только этого домена переключён на `opensc_web:8080` с лимитами запросов и параллельных передач. TLS, DNS и остальные сайты сохранены. Копия предыдущей страницы и маршрута находится в `/mnt/data/shadow-company/deployments/opensc-web-sK38zzqU/backup`.
-
-
-## Лаунчер 0.4.1
-
-Эта ветка добавляет новое оформление лаунчера, повторную проверку игры раз в минуту,
-[подписанное самообновление](docs/LAUNCHER-UPDATES-RU.md) и
-[сообщения об ошибках](docs/BUG-REPORTS-RU.md) с серверной базой. Игровая часть
-исправляет состояние кнопок после инвентаря и добавляет
-[переноску тел](engine/docs/BODY-CARRY-RU.md). Старый лаунчер 0.3.0 нужно обновить
-один раз установщиком: в нём ещё нет механизма обновления самого лаунчера.
-[Импорт игровых данных](docs/IMPORTING-RU.md) работает без запуска старого Setup.exe и ручного монтирования образов. Адрес манифеста скрыт из обычного интерфейса. Подписи языков: **Русский / English**. Публикация канала выполняется после CI и нативных проверок.
+Project-owned source code is licensed under the [MIT License](LICENSE).
+Dependencies, fonts and original game assets retain their respective terms.

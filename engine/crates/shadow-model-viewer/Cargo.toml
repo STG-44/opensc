@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "shadow-model-viewer"
 default-run = "shadow-model-viewer"
 version.workspace = true

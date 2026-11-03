@@ -8,7 +8,11 @@ use crate::{
 };
 use bevy::{mesh::VertexAttributeValues, prelude::*};
 use shadow_formats::{AssetCatalog, BmfMotion, CampaignEventType, config_lines};
-use std::error::Error;
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    sync::OnceLock,
+};
 
 #[derive(Component)]
 pub struct MapObject(pub [i32; 2]);
@@ -23,6 +27,65 @@ struct Geometry {
     solid: bool,
     triangles: Vec<[Vec3; 3]>,
 }
+#[derive(Default)]
+struct Spatial {
+    bins: HashMap<IVec2, Vec<(usize, usize)>>,
+    global: Vec<(usize, usize)>,
+}
+impl Spatial {
+    fn new(geometry: &[Geometry]) -> Self {
+        let mut index = Self::default();
+        for (g, geometry) in geometry.iter().enumerate() {
+            if !geometry.solid && !geometry.opaque {
+                continue;
+            }
+            for (t, tri) in geometry.triangles.iter().enumerate() {
+                let low = tri[0].min(tri[1]).min(tri[2]);
+                let high = tri[0].max(tri[1]).max(tri[2]);
+                let a = (Vec2::new(low.x, low.z) / 4.0).floor().as_ivec2();
+                let b = (Vec2::new(high.x, high.z) / 4.0).floor().as_ivec2();
+                let width = i64::from(b.x) - i64::from(a.x) + 1;
+                let height = i64::from(b.y) - i64::from(a.y) + 1;
+                if width > 256 || height > 256 || width * height > 1024 {
+                    index.global.push((g, t));
+                    continue;
+                }
+                for y in a.y..=b.y {
+                    for x in a.x..=b.x {
+                        index.bins.entry(IVec2::new(x, y)).or_default().push((g, t));
+                    }
+                }
+            }
+        }
+        index
+    }
+    fn candidates(&self, from: Vec3, to: Vec3) -> HashSet<(usize, usize)> {
+        let a = Vec2::new(from.x, from.z) / 4.0;
+        let b = Vec2::new(to.x, to.z) / 4.0;
+        let steps = ((b - a).abs().max_element() * 2.0).ceil().max(1.0) as usize;
+        if steps > 4096 {
+            return self
+                .bins
+                .values()
+                .flatten()
+                .copied()
+                .chain(self.global.iter().copied())
+                .collect();
+        }
+        let mut found: HashSet<_> = self.global.iter().copied().collect();
+        for i in 0..=steps {
+            let p = a.lerp(b, i as f32 / steps as f32).floor().as_ivec2();
+            for y in -1..=1 {
+                for x in -1..=1 {
+                    if let Some(entries) = self.bins.get(&(p + IVec2::new(x, y))) {
+                        found.extend(entries.iter().copied());
+                    }
+                }
+            }
+        }
+        found
+    }
+}
 #[derive(Resource)]
 pub struct Pickup {
     pub id: [i32; 2],
@@ -35,6 +98,8 @@ pub struct Pickup {
     pub callback_seconds: f32,
     pub source: serde_json::Value,
     geometry: Vec<Geometry>,
+    spatial: OnceLock<Spatial>,
+    revision: u64,
 }
 impl Pickup {
     pub fn prepare(
@@ -187,6 +252,8 @@ impl Pickup {
             collected: false,
             callback_seconds,
             geometry,
+            spatial: OnceLock::new(),
+            revision: 0,
             source: serde_json::json!({"profile":profile_path,"profile_origin":catalog.source_label(profile_path)?,"sequence":sequence_path,
                 "motion":path,"pickup_callback_frame":frame,"fps":actor.clips[4].fps,"equipment_bone":rig::RIGHT_HAND,
                 "approach_distance_metres":0.5,"approach_distance_original_verified":false}),
@@ -242,6 +309,8 @@ impl Pickup {
     }
     /// Перемещаем исходные треугольники машины вместе с видимой моделью.
     pub fn move_object(&mut self, id: [i32; 2], delta: Mat4) {
+        self.spatial.take();
+        self.revision = self.revision.wrapping_add(1);
         for g in self.geometry.iter_mut().filter(|g| g.id == id) {
             for triangle in &mut g.triangles {
                 *triangle = triangle.map(|p| delta.transform_point3(p));
@@ -250,6 +319,8 @@ impl Pickup {
     }
     /// Перемещаем выбранную часть, оставляя раму того же MTF-объекта на месте.
     pub fn move_parts(&mut self, id: [i32; 2], parts: &[String], delta: Mat4) {
+        self.spatial.take();
+        self.revision = self.revision.wrapping_add(1);
         for g in self
             .geometry
             .iter_mut()
@@ -276,6 +347,56 @@ impl Pickup {
                 .filter(|g| g.solid && !ignored(g.id))
                 .flat_map(|g| g.triangles.iter().copied()),
         );
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    fn nearby(&self, from: Vec3, to: Vec3) -> impl Iterator<Item = (&Geometry, [Vec3; 3])> {
+        self.spatial
+            .get_or_init(|| Spatial::new(&self.geometry))
+            .candidates(from, to)
+            .into_iter()
+            .map(|(g, t)| (&self.geometry[g], self.geometry[g].triangles[t]))
+    }
+    pub fn movement_hit(
+        &self,
+        from: Vec3,
+        to: Vec3,
+        height: f32,
+        ignored: impl Fn([i32; 2]) -> bool,
+    ) -> Option<f32> {
+        crate::obstacles::sweep(
+            from,
+            to,
+            height,
+            self.nearby(from, to)
+                .filter(|(g, _)| g.solid && !ignored(g.id))
+                .map(|(_, t)| t),
+        )
+    }
+    pub fn occupied(&self, point: Vec3, height: f32, ignored: impl Fn([i32; 2]) -> bool) -> bool {
+        crate::obstacles::occupied(
+            point,
+            height,
+            self.nearby(point, point)
+                .filter(|(g, _)| g.solid && !ignored(g.id))
+                .map(|(_, t)| t),
+        )
+    }
+    pub fn line_of_sight(&self, origin: Vec3, target: Vec3) -> bool {
+        let distance = origin.distance(target);
+        if !distance.is_finite() {
+            return false;
+        }
+        if distance < 1e-6 {
+            return true;
+        }
+        let direction = (target - origin) / distance;
+        !self.nearby(origin, target).any(|(g, t)| {
+            g.solid
+                && g.opaque
+                && ray_triangle(origin, direction, t).is_some_and(|d| d < distance - 0.02)
+        })
     }
     pub fn segment_hit(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
         let delta = to - from;
@@ -1549,6 +1670,8 @@ pub(crate) mod tests {
             callback_seconds: 0.3,
             source: serde_json::Value::Null,
             geometry: vec![],
+            spatial: OnceLock::new(),
+            revision: 0,
         };
         (
             item,
@@ -1754,6 +1877,8 @@ pub(crate) mod tests {
             collected: false,
             callback_seconds: 0.3,
             source: serde_json::Value::Null,
+            spatial: OnceLock::new(),
+            revision: 0,
             geometry: vec![Geometry {
                 part: String::new(),
                 id: [1, 3],

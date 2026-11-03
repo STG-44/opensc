@@ -20,6 +20,7 @@ const DAMAGE: f32 = 40.0;
 pub struct Combat {
     pub guard: player::Player,
     pub health: f32,
+    pub detected: bool,
     pub carried: bool,
     pub maximum: f32,
     pub ordered: bool,
@@ -345,6 +346,7 @@ impl Combat {
             guard,
             carried: false,
             health: maximum,
+            detected: true,
             maximum,
             ordered: false,
             hits: 0,
@@ -543,7 +545,10 @@ impl Combat {
         cursor: Vec2,
         geometry: &Pickup,
     ) -> bool {
-        if !self.alive() || !geometry.clear_line(transform.translation(), self.target()) {
+        if !self.alive()
+            || !self.detected
+            || !geometry.clear_line(transform.translation(), self.target())
+        {
             return false;
         }
         let (Ok(feet), Ok(head)) = (
@@ -709,7 +714,7 @@ pub fn input(
         }
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn sync(
     mut commands: Commands,
     combat: Option<ResMut<Combat>>,
@@ -719,9 +724,12 @@ pub fn sync(
     inventory: Option<ResMut<Inventory>>,
     time: Res<Time>,
     mut bones: Query<(&GuardBone, &mut Transform), Without<GuardRoot>>,
-    mut roots: Query<(&GuardRoot, &mut Transform), Without<GuardBone>>,
-    mut rings: Query<(&GuardRing, &mut Visibility), Without<GuardWeapon>>,
-    mut weapons: Query<(&GuardWeapon, &mut Visibility), Without<GuardRing>>,
+    mut roots: Query<
+        (&GuardRoot, &mut Transform, &mut Visibility),
+        (Without<GuardBone>, Without<GuardRing>, Without<GuardWeapon>),
+    >,
+    mut rings: Query<(&GuardRing, &mut Visibility), (Without<GuardWeapon>, Without<GuardRoot>)>,
+    mut weapons: Query<(&GuardWeapon, &mut Visibility), (Without<GuardRing>, Without<GuardRoot>)>,
     equipment: Query<(&crate::pickup::EquippedPart, &GlobalTransform)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -733,21 +741,27 @@ pub fn sync(
     };
     c.update_with_inventory(&mut p, &mut t, &item, &mut inv, time.delta_secs());
     inv.observe(&item, &c);
-    for (root, mut transform) in &mut roots {
-        *transform = c.guard_at(root.0).guard.transform();
+    for (root, mut transform, mut visibility) in &mut roots {
+        let guard = c.guard_at(root.0);
+        *transform = guard.guard.transform();
+        *visibility = if guard.detected || guard.carried {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
     for (b, mut transform) in &mut bones {
         *transform = c.guard_at(b.0).guard.playback.pose.bones[b.1];
     }
     for (ring, mut visible) in &mut rings {
-        *visible = if c.guard_at(ring.0).alive() {
+        *visible = if c.guard_at(ring.0).alive() && c.guard_at(ring.0).detected {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
     for (w, mut visible) in &mut weapons {
-        *visible = if c.guard_at(w.0).alive() {
+        *visible = if c.guard_at(w.0).alive() && c.guard_at(w.0).detected {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -1074,6 +1088,7 @@ pub(crate) mod tests {
             frames: vec![guard.clips[0].frames[0].clone(); 11],
         });
         let c = Combat {
+            detected: true,
             guard,
             carried: false,
             health: 75.0,

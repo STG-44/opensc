@@ -510,7 +510,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 )
                     .chain(),
                 (
-                    (crate::gate::tick, crate::vehicle::tick).chain(),
+                    (
+                        crate::gate::tick,
+                        crate::vehicle::tick,
+                        crate::perception::update,
+                    )
+                        .chain(),
                     pickup::sync,
                     combat::traces,
                     (crate::body_carry::tick, combat::sync).chain(),
@@ -558,6 +563,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         );
     app.add_systems(Last, crate::hud::release_keys);
     if let Some(h) = hud {
+        app.insert_resource(crate::perception::VisibilityState::prepare(&catalog)?);
         app.insert_resource(h);
     }
     if let Some(r) = roster {
@@ -1889,6 +1895,22 @@ pub(crate) fn update_player(
     let previous = player.position;
     let followed = player.follow_camera;
     if !blocked {
+        if !vehicle.as_ref().is_some_and(|v| v.occupied)
+            && !input.just_pressed(KeyCode::Home)
+            && let Some(item) = &item
+        {
+            let height = player.body_height() * [1.0, 0.65, 0.25][player.posture.index()];
+            crate::navigation::prepare(
+                &mut player,
+                &crate::navigation::World {
+                    grid,
+                    geometry: item,
+                    fence: fence.as_deref(),
+                    gate: gate.as_deref(),
+                    height,
+                },
+            );
+        }
         player.step(input, time.delta_secs(), grid);
     }
     if !vehicle.as_ref().is_some_and(|v| v.occupied)
@@ -2020,15 +2042,20 @@ pub(crate) fn update_player(
     }
 }
 pub(crate) fn orbit_camera(orbit: Res<Orbit>, mut camera: Single<&mut Transform, With<MapCamera>>) {
+    **camera = camera_pose(&orbit);
+}
+pub(crate) fn camera_focus(orbit: &Orbit) -> Vec3 {
+    let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
+    orbit.target - right * orbit.distance * 0.12
+}
+pub(crate) fn camera_pose(orbit: &Orbit) -> Transform {
     let direction = Vec3::new(
         orbit.yaw.sin() * orbit.pitch.cos(),
         orbit.pitch.sin(),
         orbit.yaw.cos() * orbit.pitch.cos(),
     );
-    let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
-    let target = orbit.target - right * orbit.distance * 0.12;
-    **camera = Transform::from_translation(target + direction * orbit.distance)
-        .looking_at(target, Vec3::Y);
+    let target = camera_focus(orbit);
+    Transform::from_translation(target + direction * orbit.distance).looking_at(target, Vec3::Y)
 }
 pub(crate) fn capture(mut commands: Commands, preview: Res<Preview>, mut frames: Local<u32>) {
     *frames += 1;
@@ -2069,6 +2096,7 @@ pub(crate) struct Session {
     party: crate::party::Party,
     roster: crate::roster::Roster,
     hud: crate::hud::Hud,
+    visibility: crate::perception::VisibilityState,
     evacuation: crate::evacuation::Evacuation,
     tutorial: tutorial::Tutorial,
     carry: crate::body_carry::Carry,
@@ -2095,6 +2123,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
     let mut party = crate::party::Party::prepare(catalog, &scene, &mission)?;
     let roster = crate::roster::Roster::prepare(catalog, &actor, &party.jack)?;
     let hud = crate::hud::Hud::prepare(catalog)?;
+    let visibility = crate::perception::VisibilityState::prepare(catalog)?;
     let evacuation =
         crate::evacuation::Evacuation::prepare(catalog, &mission, &mut actor, &mut party)?;
     let gate = crate::gate::Gate::prepare(catalog, &scene)?;
@@ -2129,6 +2158,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
         party,
         roster,
         hud,
+        visibility,
         evacuation,
         tutorial,
         carry,
@@ -2158,6 +2188,7 @@ impl Session {
         commands.insert_resource(self.party);
         commands.insert_resource(self.roster);
         commands.insert_resource(self.hud);
+        commands.insert_resource(self.visibility);
         commands.insert_resource(crate::selection::Selection::default());
         commands.insert_resource(self.evacuation);
         commands.insert_resource(self.tutorial);
@@ -2193,6 +2224,7 @@ pub(crate) fn cleanup(mut commands: Commands, roots: Query<Entity, With<player::
     commands.remove_resource::<crate::party::Party>();
     commands.remove_resource::<crate::roster::Roster>();
     commands.remove_resource::<crate::hud::Hud>();
+    commands.remove_resource::<crate::perception::VisibilityState>();
     commands.remove_resource::<crate::selection::Selection>();
     commands.remove_resource::<crate::evacuation::Evacuation>();
     commands.remove_resource::<tutorial::Tutorial>();

@@ -1,199 +1,105 @@
-> Движок перенесён в `engine/` репозитория [STG-44/opensc](https://github.com/STG-44/opensc). [Подключение к лаунчеру](../docs/ENGINE-INTEGRATION-RU.md).
+# OpenSC engine
 
-# Shadow Company на Rust и Bevy
+The **Rust + Bevy** runtime for OpenSC loads the player's original Shadow
+Company: Left for Dead resources and optional replacement assets.
 
-Независимый проект, который читает ресурсы установленного оригинала. Улучшения подключаются поверх исходных файлов. Сейчас работают `.gut`, просмотр BMP/JPEG/PNG, модели **SMF 1.0/1.1** с оригинальными текстурами и **BMF-анимации**. На учебной карте MTF/PCX **Джон без оружия появляется в исходной точке обучения и движется к указанной мышью точке по рельефу**, среди 267 статических объектов. Главное меню загружает оформление оригинала, запускает обучение и вступительный AVI-ролик со звуком и позволяет вернуться обратно. Сценарий, задания и подсказки оригинала читаются отдельным импортёром. Теперь работают подбор ножа, три часовых, BDA, инвентарь и бросок Frag Grenade из дополнительного слота, кусачки, разрезание сетки и пролезание, S/C/P, UZI, шесть охранников и аптечка с самолечением, бронежилет со сменой исходной текстуры тела и Hummer с посадкой, управлением и выходом, а также распашные ворота, спасение Джека с исходной репликой и отдельное/групповое движение двух бойцов. Обход препятствий и остальная игровая логика ещё предстоят.
+[Project](../README.md) · [Contributing](../CONTRIBUTING.md) ·
+[Tactical systems](docs/TACTICAL-SYSTEMS.md) · [Русский](README.ru.md)
 
-Версии закреплены: **Rust 1.99.0**, **Bevy 0.20.0**, зависимости — в `Cargo.lock`.
+The current gameplay development branch is
+[`codex/original-inventory`](https://github.com/STG-44/opensc/tree/codex/original-inventory)
+([PR #2](https://github.com/STG-44/opensc/pull/2)). Switch to that branch before
+building the latest test runtime.
 
-Целевые платформы: **Windows, Linux и macOS**. Подготовлены нативные проверки CI для Linux x86-64/ARM64, Windows x86-64 и Mac Intel/Apple Silicon. Сейчас сборка и окно проверены на CachyOS; остальные платформы ещё ждут выполнения CI и проверки окна. [Матрица, запуск и план упаковки](docs/PLATFORMS-RU.md).
+The workspace pins **Rust 1.99.0** and **Bevy 0.20.0**. Its current playable
+scope is the training mission: the original map, characters, animation,
+tutorial events, combat, inventory, vehicles and evacuation. The complete
+campaign is still in development.
 
-## Главное меню и обучение
+## Run from source
 
-```bash
-./scripts/demo-game.sh
+From the repository root with the pinned Rust toolchain installed:
+
+```sh
+git switch codex/original-inventory
+cargo run --manifest-path engine/Cargo.toml --locked \
+  -p shadow-model-viewer --bin shadow-game -- \
+  --game-dir "/path/to/Shadow Company"
 ```
 
-Меню использует фон и позиции выбранного оригинального/HD-оформления. Работают «Обучение», «Настройки», «Вступление» и «Выход». Ролик пропускается через Esc/Enter/пробел/ЛКМ. В обучении **Esc** открывает меню паузы с продолжением и возвратом на главный экран. **↑/↓/Tab** и **Enter** управляют кнопками; мышь также работает. Настройки языка меню, размера текста, разрешения, режима окна и смены фонов сохраняются отдельно от оригинала. [Устройство и ограничения меню](docs/MENUS-RU.md); [журнал для твоих багов](docs/BUGS-RU.md).
+The same arguments accept Windows paths. Add `--overrides "/path/to/replacements"`
+to replace assets; preserve the internal directory structure. Use
+`--settings "/path/to/test-settings.json"` for isolated settings.
 
-Фон плавно проходит пять кадров и возвращается обратно. У пунктов главного меню анимируется цветная тень: 250 мс на наведение, 750 мс на возврат; значки пуль используют оригинальную прозрачность. Надписи рисуются Unicode-шрифтом Bevy. Длительности сверены с кодом старого EXE.
+The UI supports Russian/English (`--language ru|en`), HD and wide windows
+(`--window 1920x1080`). See `--help` for inspection and native-check modes.
+Linux needs the platform libraries installed by the [engine workflow](../.github/workflows/engine.yml).
 
-Интерфейс занимает всё окно и адаптируется к современным **16:9 и 21:9 от HD**. По умолчанию — 1280×720, в настройках есть Full HD, QHD, 4K, 5K, 8K и широкие варианты. Произвольный размер: `./scripts/demo-game.sh "" "" --window 3440x1440`. В полном экране без рамки используется размер монитора. Старые размеры ресурсов служат системой координат импорта.
+## Controls
 
-Windows: `./scripts/demo-game.ps1 -GameDir "C:\Games\Shadow Company"`. Прежние команды ниже остаются витринами отдельных подсистем.
+| Action | Input |
+| --- | --- |
+| Select / add to selection | Left click / Ctrl + left click |
+| Move / run | Left click terrain / double click terrain |
+| Select John / Jack / both | 1 / 2 / F11 |
+| Stand / crouch / prone | S / C / P |
+| Stop / inventory / tracking | H / Space / T |
+| Pause / return | Esc |
+| Camera position through radar | Left click or drag |
+| Radar scale / orientation | + / − / lock buttons |
+| Diagnostics | F3 |
 
-## Запустить в этой рабочей папке
+Context actions depend on the character and equipped item. The detailed
+original control map is in the [Russian guide](README.ru.md).
 
-Открой терминал в папке `shadow-company-bevy`, рядом с `Cargo.toml`. Rust уже установлен рядом с проектом, в служебной папке `work/toolchains`. Скрипт сам подключает его для своей команды:
+## Workspace
 
-```bash
-./scripts/demo.sh
+| Crate | Responsibility |
+| --- | --- |
+| `shadow-formats` | Validated resource readers and override catalog |
+| `shadow-tools` | Asset extraction and structured inspection |
+| `shadow-viewer` | Texture inspection |
+| `shadow-model-viewer` | Character/map viewers and `shadow-game` |
+
+`navigation.rs` plans paths
+against character collision geometry. `perception.rs`
+shares team visibility with enemy rendering and the radar.
+`radar.rs` uses one invertible transform
+for the map, markers, camera outline and mouse input.
+
+## Validate
+
+```sh
+cargo fmt --manifest-path engine/Cargo.toml --all --check
+cargo test --manifest-path engine/Cargo.toml --workspace --locked
+cargo clippy --manifest-path engine/Cargo.toml --workspace --all-targets --locked -- -D warnings
 ```
 
-Каталог восстановленной игры записан в локальном файле `local/game-dir.txt`; он исключён из Git и переносимого ZIP. При первом запуске Cargo может долго собирать Bevy.
+Native scenarios require original data and a working graphics/display setup.
+Create a separate output directory and settings file:
 
-В окне: **← / →** выбирают изображение, **R** перечитывает данные, **Esc** закрывает окно. Слева показано, откуда загружен ресурс и какого он размера. Чтобы подключить собственную папку замен:
-
-```bash
-./scripts/dev.sh cargo run --locked -p shadow-viewer -- \
-  --game-dir "/путь/к/Shadow Company" \
-  --overrides "/путь/к/нашим/ресурсам"
+```sh
+shadow-game --game-dir "/path/to/game" --settings "/tmp/opensc-check/settings.json" \
+  --window 1280x720 --radar-smoke-json "/tmp/opensc-check/result.json"
 ```
 
-В папке замен нужно повторить внутренний путь ресурса, например `textures/interface/loadscrn.jpg`. Каталог оригинала и наши замены остаются отдельными.
+The radar scenario exercises UI picking, coordinates, dragging, resizing,
+original-scenery detours, visibility and exploration memory.
+`--input-smoke-json` exercises inventory and body carrying. These scenarios
+inject input events; they do not certify physical input or every driver.
 
-## Настоящая модель в 3D
+## Packaging and limits
 
-Из этой папки проекта на CachyOS:
+The [engine workflow](../.github/workflows/engine.yml) builds five native targets.
+`scripts/package-game.py` records source/binary hashes, validates architecture
+and includes dependency notices. The repository's `scripts/publish_release.py`
+creates the versioned update channel from verified packages.
+Original game archives are excluded.
 
-```bash
-./scripts/demo-model.sh
-```
+Current limits include incomplete campaign/AI behavior, several HUD commands,
+lighting/hearing perception modifiers, mission saves and full executable
+compatibility. The camera outline uses a horizontal reference plane; radar fog
+does not darken the complete 3D terrain. See [tactical systems](docs/TACTICAL-SYSTEMS.md).
 
-По умолчанию загружается оригинальная металлическая бочка из `models.gut`, её текстура — из `textures.gut`. Для ящика:
-
-```bash
-./scripts/demo-model.sh "/путь/к/игре" \
-  "models/alscct-crate_large/alscct-crate_large.smf"
-```
-
-**PgUp/PgDn** выбирают модель; **стрелки** или **ЛКМ + движение мыши** вращают камеру; **колесо / + / −** приближают; **Space** включает вращение; **R** перечитывает каталог и наши замены; **Esc** закрывает окно. Этот просмотрщик показывает статическую позу SMF. Для анимации используй отдельный пример персонажа ниже.
-
-Замена модели или текстуры подключается обычным каталогом:
-
-```bash
-./scripts/dev.sh cargo run --locked -p shadow-model-viewer -- \
-  --game-dir "/путь/к/игре" --overrides "/путь/к/нашим/ресурсам"
-```
-
-Если ссылка на текстуру отсутствует в оригинальном каталоге или её формат не декодируется, часть модели показывается розовой, а причина — в панели. [Устройство загрузчика SMF](docs/SMF-RU.md).
-
-## Персонаж с настоящей анимацией
-
-```bash
-./scripts/demo-character.sh
-```
-
-Питер Болланд собирается из тела и головы оригинала и по умолчанию идёт по площадке с АК-47. Оружие следует за анимированным узлом правой кисти; аргумент `--weapon none` убирает его. **W / S / R / G** — ходьба / стояние / бег / жест, **M** — движение или анимация на месте, **Home** — сброс позиции. **Space** — пауза, **[ / ]** — кадры, **1 / 2 / 3** — скорость. Камера следует за персонажем. [Формат BMF, ограничения и учебные упражнения](docs/BMF-RU.md).
-
-Применяются повороты костей, положение таза и траектория корня. Смена анимации смешивает позы за 0.25 секунды. Это площадка для проверки движений; навигация и столкновения ещё не реализованы.
-
-## Учебная карта
-
-[Hummer](docs/VEHICLE-RU.md): ЛКМ по машине — сесть, стрелки — ехать, H — остановиться, E → ЛКМ внутри круга — выйти. Посадка завершает пятую задачу. Динамика машины пока использует описанную в документации временную модель.
-
-[Ворота перед Джеком](docs/GATE-RU.md): ЛКМ по створке — подойти и открыть/закрыть. Исходные точки, ось, угол и время поворота восстановлены; столкновения следуют за створкой. [Спасение Джека и два бойца](docs/PARTY-RU.md) подключены: 1/2 выбирают бойца, F11 — обоих. [Нижний HUD оригинала](docs/HUD-RU.md): радар, металлические рамки и команды из игровых атласов, адаптированные к широкому экрану. F3 включает диагностику. [Рамка выделения и исходные портреты](docs/SELECTION-RU.md): Ctrl добавляет бойцов, двойной щелчок по портрету переводит камеру. Предметные действия пока остаются у Джона. [Эвакуация](docs/EVACUATION-RU.md) завершает обучение: оба бойца в исходной зоне, дымовой сигнал по callback, затем автоматический возврат в меню.
-
-[Бронежилет](docs/ARMOR-RU.md): ЛКМ подбирает Flak Jacket и надевает его; Space открывает инвентарь, ЛКМ по строке «Тело» снимает или надевает броню. Влияние брони на входящий урон предстоит. [Существующий лаунчер OpenSC и точки подключения](docs/LAUNCHER-RU.md).
-
-[Аптечка и лечение](docs/MEDICAL-RU.md): ЛКМ подбирает аптечку возле выхода, Space открывает инвентарь, ПКМ выбирает аптечку, ЛКМ по строке Джона запускает лечение. Числовые формулы ловушки/лечения пока временные и отмечены в документации.
-
-Джон начинает без оружия. После приветствия щёлкни по ножу рядом с ним: боец подойдёт, поднимет его и возьмёт в правую руку. Тринадцать подсказок (help_combat_1–4, 6, 8–13, 15–16) загружаются из ресурсов оригинала; OK, Enter или Esc закрывают окно. [Подбор и события обучения](docs/PICKUP-RU.md). После подбора ножа выбери Джона и щёлкни по первому часовому с красным кольцом: он подойдёт и атакует. Гибель часового завершает первую задачу. Подбери выпавший BDA, открой инвентарь через Space или ПКМ по Джону, перетащи пистолет в основной слот и атакуй следующего часового. Его гибель завершает вторую задачу. Подбери Frag Grenade, закрой подсказку и нажми ПКМ по третьему часовому: граната займёт дополнительный слот и будет брошена по анимационному callback. Shift+ПКМ задаёт точку принудительного броска. Взрыв завершает третью задачу. Подбери кусачки возле третьего часового и нажми ЛКМ по сетке END: Джон прорежет отверстие. Повторный ЛКМ по сетке запускает пролезание. S/C/P меняют стойку через исходные переходы. Подбери UZI за проходом, перенеси в основной слот через Space и атакуй шесть охранников ЛКМ. Их гибель завершает четвёртую задачу. Закрытые ограждения блокируют движение. [Стойки, UZI и группа охраны](docs/SMG-RU.md). [Кусачки и проход](docs/FENCE-RU.md). [Граната и ограничения физики](docs/GRENADE-RU.md). [BDA и инвентарь](docs/BDA-RU.md). [Прототип ближнего боя и границы точности](docs/COMBAT-RU.md).
-
-Для управления бойцом:
-
-```bash
-./scripts/demo-training.sh
-```
-
-**ЛКМ** выбирает бойца, задаёт точку движения или приказ подобрать нож/BDA/гранату/кусачки, разрезать сетку или пролезть через неё или атаковать часового, **двойной ЛКМ** — бег, **ПКМ** по Джону открывает инвентарь, по противнику бросает гранату из дополнительного слота; **Shift+ПКМ** бросает в точку на земле, **H** останавливает. **T** включает слежение камеры; **Numpad 4/6/8/5**, края экрана и удержание **ПКМ** перемещают камеру, **7/9 и 1/3** вращают, **0/2** меняют наклон, колесо приближает. **Ctrl+P** — пауза; **Esc** пока переключает учебную паузу; **Ctrl+X** — выход. **1 / F11** выбирают единственного бойца. [Проверенные назначения оригинала и ограничения](docs/CONTROLS-RU.md).
-
-Боец сохраняет исходные размеры; высота позиции берётся из того же PCX, что и геометрия карты. Движение прямое; ограждения блокируют путь, но обход препятствий и остальные бойцы пока не подключены. [Как устроено движение и что изучать](docs/TRAINING-RU.md). **Home** и **[ / ]** остаются учебными командами сброса и шага анимации.
-
-Для свободного просмотра карты без бойца:
-
-```bash
-./scripts/demo-map.sh
-```
-
-Загружаются исходный рельеф PCX, поверхность JPG и статические SMF-объекты из `training_final.mtf`. **WASD** перемещают камеру; **ЛКМ / стрелки** вращают; **колесо** приближает; **Home** показывает всю карту; **C** — учебную площадку. Бойцы и логика миссии ещё не подключены. [Форматы карты и учебные упражнения](docs/MTF-RU.md).
-
-## Запустить после переноса проекта
-
-Установи Rust через [официальный rustup](https://rust-lang.org/tools/install/). Требования Linux к системным библиотекам описаны в [настройке Bevy](https://bevy.org/learn/quick-start/getting-started/setup/). На Windows понадобятся инструменты сборки C++ для Rust MSVC. Файл `rust-toolchain.toml` выберет закреплённую версию компилятора.
-
-Из папки проекта:
-
-```bash
-cargo run --locked -p shadow-tools -- summary --game-dir "/путь/к/игре"
-cargo run --locked -p shadow-viewer -- --game-dir "/путь/к/игре"
-```
-
-Можно указать сам каталог `Data`. На Windows пример аргумента: `--game-dir "C:\Games\Shadow Company Left for Dead"`.
-
-Для Linux и macOS есть `./scripts/demo.sh "/путь/к/игре"`; на Windows можно использовать PowerShell:
-
-```powershell
-.\scripts\demo.ps1 -GameDir "C:\Games\Shadow Company Left for Dead"
-.\scripts\demo-model.ps1 -GameDir "C:\Games\Shadow Company Left for Dead"
-.\scripts\demo-character.ps1 -GameDir "C:\Games\Shadow Company Left for Dead"
-.\scripts\demo-map.ps1 -GameDir "C:\Games\Shadow Company Left for Dead"
-.\scripts\demo-training.ps1 -GameDir "C:\Games\Shadow Company Left for Dead"
-```
-
-## Структура
-
-| Папка | Назначение |
-|---|---|
-| `crates/shadow-formats` | Чтение GUT и поиск ресурсов с учётом замен; работает без Bevy |
-| `crates/shadow-tools` | Консольные команды для исследования оригинала |
-| `crates/shadow-viewer` | Окно, ввод, текст и показ изображения через Bevy |
-| `crates/shadow-model-viewer` | Камера, SMF-модели, сборка персонажа и BMF-анимации и движение в 3D |
-| `docs/LEARNING-RU.md` | Порядок изучения Rust на нашем коде |
-| `docs/ARCHITECTURE-RU.md` | Границы модулей и следующие шаги |
-| `docs/PLATFORMS-RU.md` | Поддержка ОС, архитектуры, сборки CI и будущая упаковка |
-| `docs/SMF-RU.md` | Проверенный формат моделей и границы 3D-прототипа |
-| `docs/MTF-RU.md` | Расстановка объектов, рельеф PCX и первое окно карты |
-| `docs/BMF-RU.md` | Формат движений, иерархия костей и первая анимация |
-| `docs/MISSIONS-RU.md` | Сценарий обучения, задания, подсказки и правильный старт Джона |
-| `docs/SMG-RU.md` | Стойки S/C/P, UZI, очереди и шесть охранников |
-| `docs/FENCE-RU.md` | Кусачки, исходные анимации, столкновения с сеткой и проход |
-| `docs/VIDEO-REFERENCE-RU.md` | Локальная запись оригинала, таймкоды и сверка поведения |
-| `docs/BEVY-020-RU.md` | Переход на Bevy 0.20 и новый API кнопок |
-| `docs/GRENADE-RU.md` | Дополнительный слот, бросок, запал и третий часовой |
-| `docs/BDA-RU.md` | Подбор BDA, перенос оружия, патроны и стрельба по второму часовому |
-| `docs/COMBAT-RU.md` | Первый часовой, удар ножом, callback, здоровье и завершение задачи |
-| `docs/TRAINING-RU.md` | Боец на рельефе, приказы и движение в метрах |
-| `docs/CONTROLS-RU.md` | Сверка управления с оригиналом и реализованная часть |
-| `docs/MENUS-RU.md` | Главное меню, настройки и переходы |
-| `docs/AVI-RU.md` | MJPEG/PCM, звук, замены роликов и диагностика |
-| `docs/BUGS-RU.md` | Журнал для ручного тестирования |
-| `../.github/workflows/engine.yml` | Нативная сборка, тесты и Clippy на пяти платформах |
-
-Оригинальные ресурсы и старые EXE/DLL не входят в исходники. Единственный встроенный сторонний ресурс — шрифт DejaVu Sans; его лицензия находится рядом с файлом шрифта.
-
-## Полезные команды
-
-```bash
-# Список ресурсов моделей.
-cargo run --locked -p shadow-tools -- list --game-dir "/путь/к/игре" --filter models/
-
-# Извлечь один ресурс в новый файл; существующий файл не перезаписывается.
-cargo run --locked -p shadow-tools -- extract --game-dir "/путь/к/игре" \
-  --asset textures/interface/loadscrn.jpg --output preview.jpg
-
-# Таблица GUT и SHA-256 декодированных данных каждого ресурса.
-cargo run --locked -p shadow-tools -- archive --file "/путь/к/Data/textures.gut" --json --hash
-
-# Структура модели и отпечаток её разобранной геометрии.
-cargo run --locked -p shadow-tools -- model --game-dir "/путь/к/игре" \
-  --asset models/alscba-oildrum_alt/alscba-oildrum_alt.smf --json
-
-# Проверить все модели, не открывая графическое окно.
-cargo run --locked -p shadow-tools -- models --game-dir "/путь/к/игре" --json
-
-# Сценарий обучения и связанные исходные ресурсы.
-cargo run --locked -p shadow-tools -- mission --game-dir "/путь/к/игре" \
-  --asset campaign/training/training.txt --json
-
-cargo test --locked -p shadow-formats
-cargo test --locked -p shadow-model-viewer
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-```
-
-В этой рабочей папке поставь `./scripts/dev.sh` перед `cargo`, чтобы использовать локальный Rust. Исходники переносимы, а служебный кэш сборки и настройки конкретного компьютера в ZIP не включаются.
-
-Проверенные результаты текущего этапа записаны в `docs/VALIDATION-RU.md`.
-
-Прозрачность сетки/колючей проволоки и RAW-маски листвы подключены: [как загружаются материалы и откуда берутся координаты](docs/MATERIALS-RU.md).
+Project-owned engine source uses the [MIT License](LICENSE); dependency, font
+and original-game asset terms remain separate.

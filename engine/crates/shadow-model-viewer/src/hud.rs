@@ -3,7 +3,7 @@ use crate::{
     hud_layout::{self, Layout},
     inventory::Inventory,
     party::Party,
-    player, selection, training,
+    player, radar, selection, training,
     tutorial::Tutorial,
     ui_controls::{ButtonVisualState, UiButton},
 };
@@ -59,7 +59,7 @@ pub struct Hud {
     pub layout: Layout,
     pub fit: Fit,
     pub diagnostics: bool,
-    zoom: f32,
+    pub(crate) radar: radar::Radar,
     injected: Vec<KeyCode>,
     pub command_posture: Option<crate::stance::Posture>,
     source: serde_json::Value,
@@ -74,7 +74,6 @@ pub(crate) enum Piece {
     Quad(usize),
     Block(usize),
     Advice(usize),
-    Marker(u8),
     Clock,
     Tooltip,
 }
@@ -140,7 +139,7 @@ impl Hud {
         {
             return Err("неподдержанная текстура HUD".into());
         }
-        let source = serde_json::json!({"definition":DEFINITION,"origin":catalog.source_label(DEFINITION)?,"textures":sources,"geometry_from_original":true,"command_frames":frames.len(),"minimap_fog_of_war":false,"disabled_commands":["overwatch","reload","formations","radar_mode","clock_speed"]});
+        let source = serde_json::json!({"definition":DEFINITION,"origin":catalog.source_label(DEFINITION)?,"textures":sources,"geometry_from_original":true,"command_frames":frames.len(),"minimap_fog_of_war":true,"disabled_commands":["overwatch","reload","formations","clock_speed"]});
         Ok(Self {
             lines,
             textures,
@@ -148,7 +147,7 @@ impl Hud {
             layout,
             fit: Fit::new(Vec2::new(1280.0, 720.0)),
             diagnostics: false,
-            zoom: 2.0,
+            radar: radar::Radar::new(),
             injected: Vec::new(),
             command_posture: None,
             source,
@@ -156,13 +155,14 @@ impl Hud {
         })
     }
     pub fn report(&self) -> serde_json::Value {
-        serde_json::json!({"source":self.source,"scale":self.fit.scale,"screen":self.fit.screen.to_array(),"zoom":self.zoom,"diagnostics":self.diagnostics,"regions":self.layout.regions.iter().map(|r|[r.min.to_array(),r.max.to_array()]).collect::<Vec<_>>()})
+        serde_json::json!({"source":self.source,"scale":self.fit.scale,"screen":self.fit.screen.to_array(),"zoom":self.radar.zoom,"radar_locked":self.radar.locked,"diagnostics":self.diagnostics,"regions":self.layout.regions.iter().map(|r|[r.min.to_array(),r.max.to_array()]).collect::<Vec<_>>()})
     }
     #[allow(dead_code)] // Используется проверкой освобождения сцены в shadow-game.
     pub fn image_handles(&self) -> impl Iterator<Item = &Handle<Image>> {
         self.textures
             .values()
             .filter_map(|t| t.handle.as_ref())
+            .chain(self.radar.handle.iter())
             .chain(self.inventory.iter().flat_map(|a| a.image_handles()))
     }
     fn image(&self, name: &str, rect: Rect, canvas: Vec2) -> ImageNode {
@@ -195,6 +195,7 @@ fn enabled(id: &str) -> bool {
             | "b_menu"
             | "b_radar_zoom_in"
             | "b_radar_zoom_out"
+            | "b_radar_mode"
             | "r_radar"
     )
 }
@@ -218,12 +219,12 @@ fn tooltip(id: &str) -> &'static str {
         "b_menu" => "Меню · Esc",
         "b_radar_zoom_in" => "Приблизить радар",
         "b_radar_zoom_out" => "Отдалить радар",
-        "r_radar" => "ЛКМ — переместить камеру",
+        "r_radar" => "ЛКМ / перетаскивание — переместить камеру",
         "r_member1" | "r_member2" => "ЛКМ — центрировать камеру на бойце",
         "b_overwatch" => "Наблюдение — ещё не реализовано",
         "b_reload" => "Перезарядка — ещё не реализована",
         "b_form_line" | "b_form_arrow" | "b_form_custom" => "Построения — ещё не реализованы",
-        "b_radar_mode" => "Режимы радара — ещё не реализованы",
+        "b_radar_mode" => "Закрепить карту / поворачивать вслед за камерой",
         "b_clock" => "Скорость времени — ещё не реализована",
         _ => "",
     }
@@ -239,6 +240,15 @@ pub fn setup(
     let Some(mut h) = hud else { return };
     h.fit = Fit::new(Vec2::new(window.width(), window.height()));
     h.layout = hud_layout::parse(&h.lines, h.fit.screen / h.fit.scale).expect("validated HD HUD");
+    let radar_source = h
+        .textures
+        .get_mut("radar")
+        .expect("radar source")
+        .image
+        .as_ref()
+        .expect("HUD setup once")
+        .clone();
+    h.radar.setup(&radar_source, &mut images);
     for t in h.textures.values_mut() {
         t.handle = Some(images.add(t.image.take().expect("HUD setup once")));
     }
@@ -323,23 +333,8 @@ pub fn setup(
         if let Some(frame) = a.frame {
             e.insert(h.image("simu1_ck.bmp", h.frames[frame], Vec2::splat(256.0)));
         } else {
-            e.insert(h.image(
-                "radar",
-                Rect::new(0.0, 0.0, 256.0, 256.0),
-                Vec2::splat(256.0),
-            ));
+            e.insert(ImageNode::new(h.radar.handle.clone().expect("radar setup")));
         }
-    }
-    for member in 1..=2 {
-        commands.spawn((
-            Piece::Marker(member),
-            UiButton,
-            CommandButton(format!("r_member{member}")),
-            Node::default(),
-            BorderColor::all(Color::srgb(0.2, 0.9, 0.15)),
-            BackgroundColor(Color::NONE),
-            ChildOf(root),
-        ));
     }
     let font = fonts.add(Font::from_bytes(
         include_bytes!("../../shadow-viewer/assets/fonts/DejaVuSans.ttf").to_vec(),
@@ -366,17 +361,6 @@ pub fn setup(
         ));
     }
 }
-fn radar_crop(center: Vec3, extent: Vec2, zoom: f32) -> Rect {
-    let half = 0.5 / zoom;
-    let c =
-        (Vec2::new(center.x, -center.z) / extent).clamp(Vec2::splat(half), Vec2::splat(1.0 - half));
-    Rect::from_corners(c - Vec2::splat(half), c + Vec2::splat(half))
-}
-fn extent(grid: &shadow_formats::TerrainGrid) -> Vec2 {
-    Vec2::new(grid.config.width as f32, grid.config.height as f32)
-        * grid.config.edge
-        * crate::map_scene::WORLD_SCALE
-}
 #[allow(clippy::too_many_arguments)]
 pub fn input(
     hud: Option<ResMut<Hud>>,
@@ -390,7 +374,7 @@ pub fn input(
     preview: Res<training::Preview>,
     mut orbit: ResMut<training::Orbit>,
     window: Single<&Window>,
-    selection: Option<Res<selection::Selection>>,
+    mut selection: Option<ResMut<selection::Selection>>,
 ) {
     let Some(mut h) = hud else { return };
     for k in h.injected.drain(..) {
@@ -403,11 +387,36 @@ pub fn input(
     let (Some(mut john), Some(mut party), Some(inv), Some(t)) = (john, party, inv, t) else {
         return;
     };
-    if t.active.is_some()
-        || t.consumed_input
-        || john.playback.paused
-        || !mouse.just_pressed(MouseButton::Left)
-    {
+    if t.active.is_some() || t.consumed_input || john.playback.paused {
+        h.radar.drag = None;
+        return;
+    }
+    let cursor = selection
+        .as_ref()
+        .and_then(|s| s.test_cursor)
+        .or_else(|| window.cursor_position());
+    if h.radar.drag.is_some() {
+        // Consume the entire gesture, including a release outside the HUD.
+        if let Some(s) = selection.as_mut() {
+            s.world_blocked = true;
+            s.click_cursor = None;
+        }
+        mouse.clear_just_pressed(MouseButton::Left);
+        if !mouse.pressed(MouseButton::Left) || inv.open {
+            h.radar.drag = None;
+        } else if let (Some(cursor), Some(grid), Some(view)) = (cursor, &preview.grid, h.radar.drag)
+        {
+            let rect = h.fit.rect(h.layout.advice("r_radar").rect);
+            set_camera(
+                &mut orbit,
+                view.world((cursor - rect.min) / rect.size(), grid),
+            );
+            john.follow_camera = false;
+            party.jack.follow_camera = false;
+        }
+        return;
+    }
+    if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
     let Some((button, _)) = buttons
@@ -442,28 +451,37 @@ pub fn input(
             h.injected.push(k);
         }
     } else if id == "b_radar_zoom_in" {
-        h.zoom = (h.zoom * 2.0).min(8.0);
+        h.radar.zoom = (h.radar.zoom * 2.0).min(8.0);
     } else if id == "b_radar_zoom_out" {
-        h.zoom = (h.zoom * 0.5).max(1.0);
+        h.radar.zoom = (h.radar.zoom * 0.5).max(1.0);
+    } else if id == "b_radar_mode" {
+        h.radar.locked = !h.radar.locked;
     } else if id == "r_radar"
         && let Some(grid) = &preview.grid
-        && let Some(cursor) = selection
-            .as_ref()
-            .and_then(|s| s.test_cursor)
-            .or_else(|| window.cursor_position())
+        && let Some(cursor) = cursor
     {
-        let r = h.fit.rect(h.layout.advice("r_radar").rect);
-        if r.contains(cursor) {
-            let crop = radar_crop(orbit.target, extent(grid), h.zoom);
-            let uv = crop.min + (cursor - r.min) / r.size() * crop.size();
-            let p = Vec3::new(uv.x * extent(grid).x, 0.0, -uv.y * extent(grid).y);
-            orbit.target = p.with_y(player::surface(grid, p).unwrap_or(0.0));
+        let rect = h.fit.rect(h.layout.advice("r_radar").rect);
+        if rect.contains(cursor) {
+            let view = h.radar.view(&orbit, grid);
+            h.radar.drag = Some(view);
+            set_camera(
+                &mut orbit,
+                view.world((cursor - rect.min) / rect.size(), grid),
+            );
             john.follow_camera = false;
             party.jack.follow_camera = false;
         }
     }
-    mouse.reset(MouseButton::Left);
+    // Keep the physical hold for radar dragging and UI picking; consume only the click.
+    mouse.clear_just_pressed(MouseButton::Left);
 }
+fn set_camera(orbit: &mut training::Orbit, focus: Vec3) {
+    // The actual camera is shifted left to leave room for the HUD. Align its focus,
+    // rather than the unshifted tracking target, with the requested map position.
+    let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
+    orbit.target = focus + right * orbit.distance * 0.12;
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn visuals(
     hud: Option<ResMut<Hud>>,
@@ -474,6 +492,10 @@ pub fn visuals(
     t: Option<Res<Tutorial>>,
     preview: Res<training::Preview>,
     orbit: Res<training::Orbit>,
+    combat: Option<Res<crate::combat::Combat>>,
+    visibility: Option<Res<crate::perception::VisibilityState>>,
+    projection: Single<&Projection, With<training::MapCamera>>,
+    mut images: ResMut<Assets<Image>>,
     buttons: Query<(&CommandButton, &ButtonVisualState)>,
     mut roots: Query<&mut Node, (With<Root>, Without<Piece>)>,
     mut pieces: Query<
@@ -483,7 +505,6 @@ pub fn visuals(
             Option<&mut ImageNode>,
             Option<&mut Text>,
             Option<&mut TextFont>,
-            Option<&mut BackgroundColor>,
         ),
         Without<Root>,
     >,
@@ -492,6 +513,13 @@ pub fn visuals(
     else {
         return;
     };
+    if let Some(visibility) = &visibility
+        && let Some(source) = h.source.as_object_mut()
+    {
+        source
+            .entry("perception")
+            .or_insert_with(|| visibility.source.clone());
+    }
     let screen = Vec2::new(window.width(), window.height());
     if screen != h.fit.screen {
         h.fit = Fit::new(screen);
@@ -506,11 +534,66 @@ pub fn visuals(
         .iter()
         .find(|(_, s)| **s != ButtonVisualState::None)
         .map(|(b, _)| b.0.as_str());
-    let crop = preview
-        .grid
-        .as_ref()
-        .map(|g| radar_crop(orbit.target, extent(g), h.zoom));
-    for (piece, mut node, image, text, font, bg) in &mut pieces {
+    if !inv.open
+        && let Some(grid) = &preview.grid
+    {
+        let extent = radar::extent(grid);
+        let view = h.radar.view(&orbit, grid);
+        let mut contacts = Vec::new();
+        for (actor, color) in [
+            (&*john, radar::FRIEND),
+            (
+                &party.jack,
+                if party.recruited {
+                    radar::FRIEND
+                } else {
+                    radar::NEUTRAL
+                },
+            ),
+        ] {
+            if color == radar::NEUTRAL && visibility.as_ref().is_some_and(|v| !v.neutral) {
+                continue;
+            }
+            contacts.push(radar::Contact {
+                position: radar::uv(actor.position, extent),
+                color,
+                selected: actor.selected && (color == radar::FRIEND),
+                friendly: true,
+            });
+        }
+        if let Some(combat) = combat {
+            for i in 0..combat.guard_count() {
+                let guard = combat.guard_at(i);
+                if guard.alive() && guard.detected && !guard.carried {
+                    contacts.push(radar::Contact {
+                        position: radar::uv(guard.guard.position, extent),
+                        color: radar::ENEMY,
+                        selected: false,
+                        friendly: false,
+                    });
+                }
+            }
+        }
+        let fov = match &**projection {
+            Projection::Perspective(p) => p.fov,
+            _ => std::f32::consts::FRAC_PI_4,
+        };
+        let footprint = radar::footprint(&orbit, fov, screen.x / screen.y, extent);
+        let center = radar::uv(training::camera_focus(&orbit), extent);
+        let size = (h.layout.advice("r_radar").rect.size() * fit.scale * window.scale_factor())
+            .ceil()
+            .as_uvec2();
+        h.radar.paint(
+            size,
+            view,
+            contacts,
+            footprint,
+            center,
+            visibility.as_deref(),
+            &mut images,
+        );
+    }
+    for (piece, mut node, image, text, font) in &mut pieces {
         let hide_in_inventory = inv.open
             && match *piece {
                 Piece::Quad(i) => h.layout.quads[i].rect.min.x < fit.screen.x / fit.scale - 184.0,
@@ -518,7 +601,7 @@ pub fn visuals(
                 Piece::Advice(i) => {
                     h.layout.advice[i].rect.min.x < fit.screen.x / fit.scale - 184.0
                 }
-                Piece::Marker(_) | Piece::Clock => true,
+                Piece::Clock => true,
                 Piece::Tooltip => false,
             };
         match *piece {
@@ -541,64 +624,31 @@ pub fn visuals(
             Piece::Advice(i) => {
                 let a = &h.layout.advice[i];
                 *node = fit.node(a.rect);
-                if let Some(mut image) = image {
-                    if a.id == "r_radar" {
-                        if let Some(crop) = crop {
-                            let size = h.textures["radar"].size;
-                            image.rect = Some(Rect::from_corners(crop.min * size, crop.max * size));
-                        }
-                    } else {
-                        let selected = match a.id.as_str() {
-                            "b_stand" => {
-                                selected_posture(&john, &party)
-                                    == Some(crate::stance::Posture::Stand)
-                            }
-                            "b_crouch" => {
-                                selected_posture(&john, &party)
-                                    == Some(crate::stance::Posture::Crouch)
-                            }
-                            "b_prone" => {
-                                selected_posture(&john, &party)
-                                    == Some(crate::stance::Posture::Prone)
-                            }
-                            "b_track" => john.follow_camera || party.jack.follow_camera,
-                            _ => false,
-                        };
-                        let brightness = if !enabled(&a.id) {
-                            0.45
-                        } else if hover == Some(a.id.as_str()) || selected {
-                            1.0
-                        } else {
-                            0.75
-                        };
-                        image.color = Color::srgba(brightness, brightness, brightness, 1.0);
-                    }
-                }
-            }
-            Piece::Marker(member) => {
-                let actor = if member == 1 { &*john } else { &party.jack };
-                let uv = preview
-                    .grid
-                    .as_ref()
-                    .map(|g| Vec2::new(actor.position.x, -actor.position.z) / extent(g));
-                if let (Some(uv), Some(crop)) = (uv, crop)
-                    && crop.contains(uv)
-                    && (member == 1 || party.recruited)
+                if let Some(mut image) = image
+                    && a.id != "r_radar"
                 {
-                    let radar = h.layout.advice("r_radar").rect;
-                    let p = radar.min + (uv - crop.min) / crop.size() * radar.size();
-                    *node = fit.node(Rect::from_center_size(p, Vec2::splat(7.0)));
-                    node.border = UiRect::all(px(fit.scale));
-                    node.border_radius = BorderRadius::MAX;
-                    if let Some(mut bg) = bg {
-                        bg.0 = if actor.selected {
-                            Color::srgba(0.2, 0.9, 0.15, 0.3)
-                        } else {
-                            Color::NONE
-                        };
-                    }
-                } else {
-                    node.display = Display::None;
+                    let selected = match a.id.as_str() {
+                        "b_stand" => {
+                            selected_posture(&john, &party) == Some(crate::stance::Posture::Stand)
+                        }
+                        "b_crouch" => {
+                            selected_posture(&john, &party) == Some(crate::stance::Posture::Crouch)
+                        }
+                        "b_prone" => {
+                            selected_posture(&john, &party) == Some(crate::stance::Posture::Prone)
+                        }
+                        "b_track" => john.follow_camera || party.jack.follow_camera,
+                        "b_radar_mode" => h.radar.locked,
+                        _ => false,
+                    };
+                    let brightness = if !enabled(&a.id) {
+                        0.45
+                    } else if hover == Some(a.id.as_str()) || selected {
+                        1.0
+                    } else {
+                        0.75
+                    };
+                    image.color = Color::srgba(brightness, brightness, brightness, 1.0);
                 }
             }
             Piece::Clock => {
@@ -619,7 +669,14 @@ pub fn visuals(
                     0.0,
                 ));
                 if let Some(mut text) = text {
-                    **text = hover.map(tooltip).unwrap_or("").into();
+                    **text = hover
+                        .map(tooltip)
+                        .unwrap_or(if john.route.failed || party.jack.route.failed {
+                            "Путь к выбранной точке перекрыт"
+                        } else {
+                            ""
+                        })
+                        .into();
                 }
                 if let Some(mut font) = font {
                     font.font_size = FontSize::Px(15.0 * fit.scale);
@@ -668,7 +725,7 @@ mod tests {
             },
             fit: Fit::new(Vec2::new(1280.0, 720.0)),
             diagnostics: false,
-            zoom: 2.0,
+            radar: radar::Radar::new(),
             injected: vec![],
             command_posture: None,
             source: serde_json::Value::Null,
@@ -799,24 +856,6 @@ mod tests {
             .paused = true;
         app.update();
         assert!(app.world().resource::<Hud>().injected.is_empty());
-    }
-    #[test]
-    fn radar_crop_uses_negative_world_z_and_clamps_at_map_edges() {
-        let extent = Vec2::new(100.0, 200.0);
-        let crop = radar_crop(Vec3::new(50.0, 0.0, -100.0), extent, 2.0);
-        assert_eq!(crop, Rect::new(0.25, 0.25, 0.75, 0.75));
-        assert_eq!(
-            radar_crop(Vec3::ZERO, extent, 2.0),
-            Rect::new(0.0, 0.0, 0.5, 0.5)
-        );
-        assert_eq!(
-            radar_crop(Vec3::new(1000.0, 0.0, -1000.0), extent, 2.0),
-            Rect::new(0.5, 0.5, 1.0, 1.0)
-        );
-        assert_eq!(
-            radar_crop(Vec3::ZERO, extent, 1.0),
-            Rect::new(0.0, 0.0, 1.0, 1.0)
-        );
     }
     #[test]
     fn hd_and_ultrawide_preserve_sprite_aspect_and_bottom_anchor() {

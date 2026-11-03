@@ -22,6 +22,10 @@ mod input_smoke;
 mod locale_smoke;
 #[path = "menu_pages.rs"]
 mod pages;
+#[path = "radar_smoke.rs"]
+mod radar_smoke;
+#[path = "world_smoke.rs"]
+mod world_smoke;
 
 const MENU_PATH: &str = "config/window_bases/main_menu.txt";
 const RESOLUTIONS: &[[u32; 2]] = &[
@@ -190,6 +194,7 @@ struct Config {
     campaign_tab: usize,
     locale_smoke: Option<PathBuf>,
     input_smoke: Option<PathBuf>,
+    radar_smoke: Option<PathBuf>,
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
@@ -417,7 +422,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 .chain()
                 .run_if(training_accepts_input),
             training::update_player,
-            (crate::gate::tick, crate::vehicle::tick).chain(),
+            (
+                crate::gate::tick,
+                crate::vehicle::tick,
+                crate::perception::update,
+            )
+                .chain(),
             crate::pickup::sync,
             crate::combat::traces,
             (crate::body_carry::tick, crate::combat::sync).chain(),
@@ -481,6 +491,10 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if let Some(path) = config.input_smoke {
         app.insert_resource(input_smoke::Smoke::new(path))
             .add_systems(Last, input_smoke::run);
+    }
+    if let Some(path) = config.radar_smoke {
+        app.insert_resource(radar_smoke::Smoke::new(path))
+            .add_systems(Last, radar_smoke::run);
     }
     if let Some(path) = config.locale_smoke {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -579,7 +593,10 @@ fn add_screens(app: &mut App) {
         OnEnter(Screen::Movie),
         (reset_input, spawn_movie, movie::start).chain(),
     )
-    .add_systems(OnExit(Screen::Training), crate::medical::reset_cursor)
+    .add_systems(
+        OnExit(Screen::Training),
+        (crate::medical::reset_cursor, cancel_radar_drag),
+    )
     .add_systems(OnExit(Screen::Movie), movie::cleanup);
 }
 fn window_mode(fullscreen: bool) -> WindowMode {
@@ -671,6 +688,9 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         println!(
             "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language ru|en] [--window WIDTHxHEIGHT] [--screen main|options|new-game|load-game|multiplayer|quit|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json] [--locale-smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
         );
+        println!(
+            "Native checks: --input-smoke-json FILE.json or --radar-smoke-json FILE.json; each requires --screen main and an isolated --settings FILE.json."
+        );
         return Ok(None);
     }
     let mut game = std::env::var_os("SHADOW_GAME_DIR").map(PathBuf::from);
@@ -695,6 +715,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         campaign_tab: 0,
         locale_smoke: None,
         input_smoke: None,
+        radar_smoke: None,
     };
     let mut seen = HashSet::new();
     for pair in args.chunks(2) {
@@ -719,6 +740,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--smoke-json" => config.smoke = Some(value.into()),
             "--locale-smoke-json" => config.locale_smoke = Some(value.into()),
             "--input-smoke-json" => config.input_smoke = Some(value.into()),
+            "--radar-smoke-json" => config.radar_smoke = Some(value.into()),
             "--movie" => config.movie = Some(shadow_formats::normalize_path(value)?),
             "--movie-json" => config.movie_report = Some(value.into()),
             "--evacuation-smoke-json" => config.evacuation_smoke = Some(value.into()),
@@ -840,11 +862,12 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         + usize::from(config.evacuation_smoke.is_some())
         + usize::from(config.locale_smoke.is_some())
         + usize::from(config.input_smoke.is_some())
+        + usize::from(config.radar_smoke.is_some())
         > 1
     {
         return Err("выбери один выходной файл".into());
     }
-    if config.input_smoke.is_some()
+    if (config.input_smoke.is_some() || config.radar_smoke.is_some())
         && (!seen.contains("--settings") || config.screen != Screen::Main)
     {
         return Err("--input-smoke-json requires --screen main and isolated --settings".into());
@@ -1264,6 +1287,11 @@ fn spawn_loading(
         &pages::Navigation::default(),
         &mut focus,
     );
+}
+fn cancel_radar_drag(hud: Option<ResMut<crate::hud::Hud>>) {
+    if let Some(mut hud) = hud {
+        hud.radar.drag = None;
+    }
 }
 fn spawn_pause(
     mut commands: Commands,

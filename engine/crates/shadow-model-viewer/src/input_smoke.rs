@@ -31,7 +31,7 @@ impl Smoke {
         self.changed = self.frames;
     }
 }
-fn mouse(world: &mut World, down: bool) {
+pub(super) fn mouse(world: &mut World, down: bool) {
     let window = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
@@ -48,7 +48,7 @@ fn mouse(world: &mut World, down: bool) {
     world.write_message(event);
     world.write_message(bevy::window::WindowEvent::MouseButtonInput(event));
 }
-fn point(world: &mut World, entity: Entity) {
+pub(super) fn point(world: &mut World, entity: Entity) {
     let transform = world
         .get::<UiGlobalTransform>(entity)
         .expect("laid-out UI transform");
@@ -78,7 +78,7 @@ fn point(world: &mut World, entity: Entity) {
     world.write_message(event.clone());
     world.write_message(bevy::window::WindowEvent::CursorMoved(event));
 }
-fn hud(world: &mut World, id: &str) -> Entity {
+pub(super) fn hud(world: &mut World, id: &str) -> Entity {
     world
         .query::<(Entity, &crate::hud::CommandButton)>()
         .iter(world)

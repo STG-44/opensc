@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "shadow-viewer"
 version.workspace = true
 edition.workspace = true

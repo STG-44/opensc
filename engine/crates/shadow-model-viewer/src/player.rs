@@ -23,6 +23,7 @@ pub struct Player {
     pub name: String,
     pub display_name: String,
     pub source: serde_json::Value,
+    pub(crate) senses: crate::perception::Skills,
     pub rig: Option<rig::Rig>,
     pub clips: Vec<Clip>,
     pub playback: Playback,
@@ -31,6 +32,7 @@ pub struct Player {
     pub follow_camera: bool,
     pub selected: bool,
     pub destination: Option<Vec3>,
+    pub(crate) route: crate::navigation::Route,
     pub running: bool,
     pub prepared_weapon: Option<String>,
     pub weapon: Option<String>,
@@ -118,6 +120,7 @@ pub(crate) fn prepare_actor(
         .map(|path| Clip::new(&BmfMotion::from_bytes(&catalog.read(path)?)?, &rig.bones))
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     Ok(Player {
+        senses: crate::perception::Skills::from_profile(&profile.properties)?,
         name: profile.id.clone(),
         display_name: profile.display_name(),
         source: serde_json::json!({"actor_id":actor.id,"source_position":actor.position,"source_rotation":actor.rotation,
@@ -137,6 +140,7 @@ pub(crate) fn prepare_actor(
         follow_camera: false,
         selected: true,
         destination: None,
+        route: crate::navigation::Route::default(),
         running: false,
         prepared_weapon: None,
         weapon: None,
@@ -314,6 +318,9 @@ impl Player {
         point.y = height;
         self.pickup_seconds = None;
         self.action = None;
+        if self.destination != Some(point) {
+            self.route.clear();
+        }
         self.destination = Some(point);
         self.running = running;
         self.gesture = false;
@@ -325,6 +332,7 @@ impl Player {
     }
     pub fn begin_action(&mut self, index: usize) {
         self.destination = None;
+        self.route.clear();
         self.pickup_seconds = None;
         self.action = Some((index, 0.0));
         self.playback.selected = index;
@@ -389,6 +397,7 @@ impl Player {
             self.heading = self.spawn_heading;
             self.gesture = false;
             self.destination = None;
+            self.route.clear();
             self.playback.select(&self.clips, 0);
             self.playback.reset(&self.clips);
         }
@@ -406,6 +415,7 @@ impl Player {
             self.pickup_seconds = None;
             self.action = None;
             self.destination = None;
+            self.route.clear();
             self.gesture = false;
             if !self.changing_posture() {
                 self.playback.select(&self.clips, self.idle_clip());
@@ -449,8 +459,10 @@ impl Player {
             }
             return;
         }
+        let destination = self.destination;
         let remaining = self
-            .destination
+            .route
+            .next(self.position, destination)
             .map(|p| Vec3::new(p.x - self.position.x, 0.0, p.z - self.position.z))
             .unwrap_or(Vec3::ZERO);
         let direction = remaining.normalize_or_zero();
@@ -511,6 +523,7 @@ impl Player {
             Vec2::new(p.x - self.position.x, p.z - self.position.z).length() < 0.001
         }) {
             self.destination = None;
+            self.route.clear();
             self.playback.select(&self.clips, self.idle_clip());
         }
     }
@@ -533,7 +546,7 @@ impl Player {
             "armed":rig.armed || self.weapon.is_some(),"weapon":self.weapon,"prepared_weapon":self.prepared_weapon,"pickup_seconds":self.pickup_seconds,"action_animation":self.action,"weapon_bone_id":self.weapon.is_some().then_some(rig::RIGHT_HAND),
             "pack_bone_id":rig.pack_bone_id,
             "weapon_world_vertices":if self.weapon.is_some() {self.equipment_parts.iter().find(|(path,_)| self.weapon.as_ref()==Some(path)).map(|(_,range)| rig::accessory_world_vertices(rig, &self.playback.pose.bones, self.transform(),range.clone())).unwrap_or_default()} else {Vec::new()},
-            "obstacle_collisions":true,"obstacle_collision_radius_metres":0.20,"obstacle_collision_original_verified":false,"navigation":false,"foot_ik":false
+            "obstacle_collisions":true,"obstacle_collision_radius_metres":0.20,"obstacle_collision_original_verified":false,"navigation":true,"route_waypoints_metres":self.route.points().map(|p|p.to_array()).collect::<Vec<_>>(),"foot_ik":false
         })
     }
 }
@@ -710,6 +723,7 @@ pub(crate) mod tests {
             })
             .collect::<Vec<_>>();
         Player {
+            senses: crate::perception::Skills::default(),
             name: "Test".into(),
             display_name: "Test Actor".into(),
             source: serde_json::Value::Null,
@@ -723,6 +737,7 @@ pub(crate) mod tests {
             follow_camera: false,
             selected: true,
             destination: None,
+            route: crate::navigation::Route::default(),
             running: false,
             prepared_weapon: None,
             weapon: None,

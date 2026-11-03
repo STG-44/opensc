@@ -832,7 +832,7 @@ pub fn native_smoke(
                     assert!(orbit.target.distance(p) < 0.001);
                 }
                 Check::Hud => {
-                    assert_eq!(hud.image_handles().count(), 13);
+                    assert_eq!(hud.image_handles().count(), 14);
                     assert_eq!(hud.layout.regions.len(), 3);
                     assert_eq!(hud.layout.advice.len(), 18);
                     assert!(!hud.diagnostics);

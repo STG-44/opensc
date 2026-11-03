@@ -535,6 +535,19 @@ pub fn tick(
     ] {
         input.reset(key);
     }
+    if !party.jack.playback.paused {
+        let height = party.jack.body_height() * [1.0, 0.65, 0.25][party.jack.posture.index()];
+        crate::navigation::prepare(
+            &mut party.jack,
+            &crate::navigation::World {
+                grid,
+                geometry: &geometry,
+                fence: Some(&fence),
+                gate: Some(&gate),
+                height,
+            },
+        );
+    }
     party.jack.step(&input, time.delta_secs(), grid);
     geometry.guard_movement(&mut party.jack, previous, grid, |id| {
         fence.handles_collision(id) || gate.id == id
@@ -671,7 +684,8 @@ pub fn visuals(
     t: Option<Res<Tutorial>>,
     inv: Option<Res<Inventory>>,
     v: Option<Res<Vehicle>>,
-    mut roots: Query<&mut Transform, With<Root>>,
+    visibility: Option<Res<crate::perception::VisibilityState>>,
+    mut roots: Query<(&mut Transform, &mut Visibility), With<Root>>,
     mut bones: Query<(&Bone, &mut Transform), Without<Root>>,
     mut markers: Query<(&Marker, &mut Transform, &mut Visibility), (Without<Root>, Without<Bone>)>,
     mut jack_status: Query<(&mut Node, &mut Text), (With<JackStatus>, Without<player::Status>)>,
@@ -680,8 +694,13 @@ pub fn visuals(
     let (Some(party), Some(john), Some(_t), Some(_inv), Some(_v)) = (party, john, t, inv, v) else {
         return;
     };
-    for mut root in &mut roots {
+    for (mut root, mut shown) in &mut roots {
         *root = party.jack.transform();
+        *shown = if party.recruited || visibility.as_ref().is_none_or(|v| v.neutral) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
     for (b, mut tr) in &mut bones {
         *tr = party.jack.playback.pose.bones[b.0];

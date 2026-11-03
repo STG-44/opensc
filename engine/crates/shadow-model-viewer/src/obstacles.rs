@@ -107,6 +107,25 @@ pub fn sweep(
         })
         .min_by(f32::total_cmp)
 }
+pub(crate) fn occupied(
+    point: Vec3,
+    height: f32,
+    mut triangles: impl Iterator<Item = [Vec3; 3]>,
+) -> bool {
+    triangles.any(|triangle| {
+        let points = clip_y(
+            &clip_y(&triangle, point.y + 0.12, true),
+            point.y + height,
+            false,
+        );
+        let poly: Vec<_> = points.into_iter().map(flat).collect();
+        !poly.is_empty()
+            && (inside(flat(point), &poly)
+                || (0..poly.len()).any(|i| {
+                    distance_edge(flat(point), poly[i], poly[(i + 1) % poly.len()]) < 0.20
+                }))
+    })
+}
 pub fn guard(
     actor: &mut crate::player::Player,
     previous: Vec3,

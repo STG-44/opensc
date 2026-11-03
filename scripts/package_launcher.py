@@ -216,7 +216,7 @@ def source_hashes():
 
 
 def notices(metadata, destination):
-    text = ['OpenSC Launcher: third-party notices\n', '\nInstallShield format reference: twogood/unshield\n', (PROJECT/'third-party/unshield-LICENSE.txt').read_text(encoding='utf-8')]
+    text = ['OpenSC Launcher: project and third-party notices\n', '\nOpenSC project source — MIT License\n', (PROJECT/'LICENSE').read_text(encoding='utf-8'), '\nInstallShield format reference: twogood/unshield\n', (PROJECT/'third-party/unshield-LICENSE.txt').read_text(encoding='utf-8')]
     for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
         if package['source'] is None:
             continue

@@ -364,6 +364,7 @@ impl Carry {
         (0..combat.guard_count()).find(|&i| {
             let guard = combat.guard_at(i);
             if !guard.death_finished()
+                || !guard.detected
                 || guard.carried
                 || !geometry.clear_line(
                     transform.translation(),

@@ -164,5 +164,8 @@
   "Осколочная граната": "Frag grenade",
   "Бронежилет": "Flak jacket",
   "Здоровье:": "Health:",
-  "Джон кладёт тело": "John is putting down the body"
+  "Джон кладёт тело": "John is putting down the body",
+  "ЛКМ / перетаскивание — переместить камеру": "Left click / drag — move camera",
+  "Закрепить карту / поворачивать вслед за камерой": "Lock map / rotate with camera",
+  "Путь к выбранной точке перекрыт": "The destination is unreachable"
 }
