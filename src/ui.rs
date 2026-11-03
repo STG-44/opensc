@@ -918,8 +918,6 @@ impl eframe::App for Launcher {
                         ui.label(RichText::new(tr("Меню, видео и обучение на ресурсах вашей копии Shadow Company: Left for Dead.")).size(15.0).color(Color32::from_rgb(203, 207, 194)));
                         ui.add_space(18.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("RUST / BEVY").monospace().size(10.0).color(MUTED));
-                            ui.separator();
                             ui.label(RichText::new("WINDOWS · LINUX · macOS").monospace().size(10.0).color(MUTED));
                         });
                     });
@@ -928,11 +926,9 @@ impl eframe::App for Launcher {
                         egui::ScrollArea::vertical().id_salt("news").show(ui, |ui| {
                             eyebrow(ui, "ОБНОВЛЕНИЯ ПРОЕКТА");
                             ui.add_space(8.0);
-                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", self.config.language.native_name(), "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
+                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", "Возвращение на учебную карту", "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
                             ui.add_space(10.0);
                             news_card(ui, "НАЧАЛО ИГРЫ", "Ваша копия Shadow Company", "Выберите папку игры или образ MDF/MDS в настройках. Лаунчер сам скопирует игровые данные и будет обновлять движок.");
-                            ui.add_space(10.0);
-                            news_card(ui, "ТЕСТОВЫЙ ПРОЕКТ", "Возвращение на учебную карту", "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
                         });
                     });
                 });
@@ -943,6 +939,7 @@ impl eframe::App for Launcher {
         if self.settings {
             let mut open = true;
             egui::Window::new(tr("Настройки лаунчера"))
+                .id(egui::Id::new("launcher-settings"))
                 .open(&mut open)
                 .default_width(700.0)
                 .vscroll(true)
