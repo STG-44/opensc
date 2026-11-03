@@ -1410,7 +1410,7 @@ pub(crate) fn issue_orders(
         let direction = (player.position - party.jack.position)
             .with_y(0.0)
             .normalize_or_zero();
-        player.order(grid, party.jack.position + direction * 1.0, false);
+        player.order_interaction(grid, party.jack.position + direction * 1.0);
         history.0 = None;
         return;
     }
@@ -1890,6 +1890,15 @@ pub(crate) fn update_player(
     let followed = player.follow_camera;
     if !blocked {
         player.step(input, time.delta_secs(), grid);
+    }
+    if !vehicle.as_ref().is_some_and(|v| v.occupied)
+        && !input.just_pressed(KeyCode::Home)
+        && let Some(item) = &item
+    {
+        item.guard_movement(&mut player, previous, grid, |id| {
+            fence.as_ref().is_some_and(|f| f.handles_collision(id))
+                || gate.as_ref().is_some_and(|g| g.id == id)
+        });
     }
     if let Some(f) = &mut fence
         && !vehicle.as_ref().is_some_and(|v| v.occupied)

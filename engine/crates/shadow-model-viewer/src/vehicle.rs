@@ -331,7 +331,7 @@ impl Vehicle {
                     .total_cmp(&b.distance_squared(p.position))
             })
             .unwrap();
-        self.approaching = p.order(grid, point, false);
+        self.approaching = p.order_interaction(grid, point);
         self.approach = self.approaching.then_some(point);
         self.approaching
     }

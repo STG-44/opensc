@@ -17,6 +17,7 @@ mod map_scene;
 mod medical;
 mod motion;
 mod normals;
+mod obstacles;
 mod orders;
 mod party;
 mod pickup;

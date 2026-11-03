@@ -396,7 +396,7 @@ impl Inventory {
         if !self.available || self.collected || actor.playback.paused {
             return false;
         }
-        if actor.order(grid, self.position.unwrap(), false) {
+        if actor.order_interaction(grid, self.position.unwrap()) {
             self.ordered = true;
             true
         } else {

@@ -536,6 +536,9 @@ pub fn tick(
         input.reset(key);
     }
     party.jack.step(&input, time.delta_secs(), grid);
+    geometry.guard_movement(&mut party.jack, previous, grid, |id| {
+        fence.handles_collision(id) || gate.id == id
+    });
     fence.guard_movement(&mut party.jack, previous);
     gate.guard_movement(&mut party.jack, previous);
     if party.jack.follow_camera {

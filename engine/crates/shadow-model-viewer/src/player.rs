@@ -319,6 +319,10 @@ impl Player {
         self.gesture = false;
         true
     }
+    /// Interaction orders keep the movement mode chosen by the player.
+    pub fn order_interaction(&mut self, grid: &TerrainGrid, point: Vec3) -> bool {
+        self.order(grid, point, self.running)
+    }
     pub fn begin_action(&mut self, index: usize) {
         self.destination = None;
         self.pickup_seconds = None;
@@ -363,6 +367,9 @@ impl Player {
     }
     pub fn camera_target(&self) -> Vec3 {
         self.position + self.focus
+    }
+    pub fn body_height(&self) -> f32 {
+        self.focus.y * 2.0
     }
 
     /// Вращаем только новую дельту движения: поворот не меняет пройденный путь.
@@ -526,7 +533,7 @@ impl Player {
             "armed":rig.armed || self.weapon.is_some(),"weapon":self.weapon,"prepared_weapon":self.prepared_weapon,"pickup_seconds":self.pickup_seconds,"action_animation":self.action,"weapon_bone_id":self.weapon.is_some().then_some(rig::RIGHT_HAND),
             "pack_bone_id":rig.pack_bone_id,
             "weapon_world_vertices":if self.weapon.is_some() {self.equipment_parts.iter().find(|(path,_)| self.weapon.as_ref()==Some(path)).map(|(_,range)| rig::accessory_world_vertices(rig, &self.playback.pose.bones, self.transform(),range.clone())).unwrap_or_default()} else {Vec::new()},
-            "obstacle_collisions":false,"navigation":false,"foot_ik":false
+            "obstacle_collisions":true,"obstacle_collision_radius_metres":0.20,"obstacle_collision_original_verified":false,"navigation":false,"foot_ik":false
         })
     }
 }
@@ -792,6 +799,20 @@ pub(crate) mod tests {
         p.step(&input(&[KeyCode::Home]), 0.0, &grid());
         near(p.position, p.spawn);
         assert_eq!(p.heading, p.spawn_heading);
+    }
+    #[test]
+    fn interaction_order_preserves_running_and_the_current_animation_phase() {
+        let mut p = player();
+        let grid = grid();
+        assert!(p.order(&grid, Vec3::new(0.5, 0.0, -2.0), true));
+        p.step(&input(&[]), 0.1, &grid);
+        let seconds = p.playback.seconds;
+        assert!(p.order_interaction(&grid, Vec3::new(1.5, 0.0, -2.0)));
+        assert!(p.running);
+        assert_eq!(p.playback.seconds, seconds);
+        assert_eq!(p.playback.selected, 2);
+        p.step(&input(&[]), 0.05, &grid);
+        assert!(p.playback.seconds > seconds);
     }
     #[test]
     fn move_order_uses_animation_metres_and_samples_the_slope_then_halts() {

@@ -101,6 +101,118 @@ fn snapshot(world: &mut World, smoke: &Smoke, name: &str) {
         .spawn(Screenshot::primary_window())
         .observe(save_to_disk(smoke.path.parent().unwrap().join(name)));
 }
+fn verify_grid_frame(world: &mut World) {
+    let fit = world.resource::<crate::hud::Hud>().fit;
+    let mut right = 0.0f32;
+    for (slot, node, tr) in world
+        .query::<(&crate::inventory::Slot, &ComputedNode, &UiGlobalTransform)>()
+        .iter(world)
+    {
+        if *slot == crate::inventory::Slot::Backpack {
+            let (_, _, center) = tr.to_scale_angle_translation();
+            right = right.max((center.x + node.size().x * 0.5) * node.inverse_scale_factor());
+        }
+    }
+    assert!(
+        (right - (fit.screen.x - 184.0 * fit.scale)).abs() < 1.1,
+        "inventory right gap: {right}"
+    );
+}
+fn verify_world_props(world: &mut World, smoke: &mut Smoke) {
+    use bevy::mesh::VertexAttributeValues;
+    let mut objects = Vec::new();
+    let mut query = world.query::<(
+        &crate::pickup::MapObject,
+        &Name,
+        &GlobalTransform,
+        &Children,
+    )>();
+    for (id, name, tr, children) in query.iter(world) {
+        let lower_name = name.as_str().to_ascii_lowercase();
+        if !["crate", "table", "drum"]
+            .iter()
+            .any(|tag| lower_name.contains(tag))
+        {
+            continue;
+        }
+        let mut low = Vec3::splat(f32::INFINITY);
+        let mut high = Vec3::splat(f32::NEG_INFINITY);
+        for child in children.iter() {
+            let Some(mesh) = world.get::<Mesh3d>(child) else {
+                continue;
+            };
+            let Some(mesh) = world.resource::<Assets<Mesh>>().get(&mesh.0) else {
+                continue;
+            };
+            let Some(VertexAttributeValues::Float32x3(points)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                continue;
+            };
+            let matrix = world.get::<GlobalTransform>(child).unwrap().to_matrix();
+            for point in points {
+                let point = matrix.transform_point3(Vec3::from_array(*point));
+                low = low.min(point);
+                high = high.max(point);
+            }
+        }
+        let center = (low + high) * 0.5;
+        let ground = player::surface(
+            world.resource::<training::Preview>().grid.as_ref().unwrap(),
+            center,
+        );
+        if low.is_finite()
+            && (high - low).max_element() < 5.0
+            && ground.is_some_and(|y| high.y > y + 0.2 && low.y < y + 1.5)
+        {
+            objects.push((id.0, lower_name, low, high, tr.to_matrix()));
+        }
+    }
+    for tag in ["crate", "table", "drum"] {
+        let (id, name, low, high, _) = objects
+            .iter()
+            .find(|(_, name, _, _, _)| name.contains(tag))
+            .expect("representative original prop");
+        let center = (*low + *high) * 0.5;
+        let grid = world.resource::<training::Preview>().grid.as_ref().unwrap();
+        let mut from = Vec3::new(low.x - 0.8, 0.0, center.z);
+        let mut to = Vec3::new(high.x + 0.8, 0.0, center.z);
+        from.y = player::surface(grid, from).unwrap();
+        to.y = player::surface(grid, to).unwrap();
+        world.resource_scope(|world, mut actor: Mut<player::Player>| {
+            let saved = (actor.position, actor.destination, actor.posture);
+            actor.position = to;
+            actor.destination = Some(to);
+            actor.posture = crate::stance::Posture::Stand;
+            world.resource::<crate::pickup::Pickup>().guard_movement(
+                &mut actor,
+                from,
+                world.resource::<training::Preview>().grid.as_ref().unwrap(),
+                |other| other != *id,
+            );
+            assert!(
+                actor.position.x < high.x && actor.destination.is_none(),
+                "walked through original {name}: bounds={low:?}/{high:?}, sweep={from:?}/{to:?}, result={:?}",actor.position
+            );
+            actor.position = saved.0;
+            actor.destination = saved.1;
+            actor.posture = saved.2;
+        });
+        smoke
+            .checks
+            .push(format!("original-{tag}-mesh-blocks-character-sweep"));
+    }
+    let (_, _, low, high, matrix) = objects
+        .iter()
+        .find(|(_, name, _, _, _)| name.contains("granitecrate") && !name.contains("dam"))
+        .expect("GRANITE crate");
+    let normal = matrix.transform_vector3(-Vec3::Z).normalize();
+    let mut orbit = world.resource_mut::<training::Orbit>();
+    orbit.target = (*low + *high) * 0.5;
+    orbit.yaw = normal.x.atan2(normal.z);
+    orbit.pitch = 0.23;
+    orbit.distance = 4.5;
+}
 fn primary_ammo(world: &mut World) -> String {
     let screen = world
         .query::<&Window>()
@@ -396,6 +508,25 @@ pub(super) fn run(world: &mut World) {
             smoke.advance("");
         }
         23 if ready => {
+            if matches!(
+                world.resource::<crate::body_carry::Carry>().phase,
+                crate::body_carry::Phase::Dropping(_)
+            ) {
+                if !smoke
+                    .checks
+                    .iter()
+                    .any(|c| c == "D-starts-animated-body-release")
+                {
+                    smoke.checks.push("D-starts-animated-body-release".into());
+                    world
+                        .spawn(Screenshot::primary_window())
+                        .observe(save_to_disk(
+                            smoke.path.parent().unwrap().join("body-drop.png"),
+                        ));
+                }
+                world.insert_resource(smoke);
+                return;
+            }
             assert_eq!(
                 world.resource::<crate::body_carry::Carry>().phase,
                 crate::body_carry::Phase::Idle,
@@ -564,6 +695,28 @@ pub(super) fn run(world: &mut World) {
             smoke.advance("original-query-button-opens-localized-mercenary-skills");
         }
         42 if ready => {
+            verify_grid_frame(world);
+            smoke
+                .checks
+                .push("inventory-grid-reaches-right-frame".into());
+            {
+                let mut inv = world.resource_mut::<crate::inventory::Inventory>();
+                inv.open = false;
+                inv.skills = false;
+            }
+            verify_world_props(world, &mut smoke);
+            smoke.advance("");
+        }
+        43 if ready => {
+            snapshot(world, &smoke, "granite-crate-rear-label.png");
+            world.resource_mut::<training::Orbit>().yaw += std::f32::consts::PI;
+            smoke.advance("");
+        }
+        44 if ready => {
+            snapshot(world, &smoke, "granite-crate-front-label.png");
+            smoke.advance("");
+        }
+        45 if ready => {
             if let Some(parent) = smoke.path.parent() {
                 std::fs::create_dir_all(parent).unwrap();
             }

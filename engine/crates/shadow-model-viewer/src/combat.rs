@@ -390,7 +390,7 @@ impl Combat {
         {
             return false;
         }
-        if actor.order(grid, self.guard.position, false) {
+        if actor.order_interaction(grid, self.guard.position) {
             self.ordered = true;
             self.hit_applied = false;
             true
@@ -893,7 +893,7 @@ impl Combat {
         self.cancel_all(p);
         self.message.clear();
         if gun {
-            if p.order(grid, self.guard_at(index).guard.position, false) {
+            if p.order_interaction(grid, self.guard_at(index).guard.position) {
                 self.fire = Some(FireOrder {
                     target: index,
                     phase: FirePhase::Approach,
@@ -1100,6 +1100,16 @@ pub(crate) mod tests {
             message: String::new(),
         };
         (c, actor, item, t, grid)
+    }
+    #[test]
+    fn approaching_an_enemy_keeps_running_for_melee_and_gun_orders() {
+        let (mut c, mut p, _, _, grid) = fixture();
+        p.running = true;
+        assert!(c.order(&mut p, &grid));
+        assert!(p.running);
+        p.weapon = Some(c.gun_model.clone());
+        assert!(c.order_target(0, &mut p, &grid));
+        assert!(p.running);
     }
     #[test]
     fn callback_applies_once_per_strike_and_death_completes_linked_objective() {

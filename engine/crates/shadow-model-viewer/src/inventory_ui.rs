@@ -354,6 +354,15 @@ fn amount(commands: &mut Commands, parent: Entity, a: &Appearance, fit: Fit, rec
     );
 }
 /// Stable first-fit packing respects OBJECT_SLOT_USE, including the 2x2 medical kit.
+fn pack_grid(source: Rect, fit: Fit) -> (usize, Vec2) {
+    let width = (fit.screen.x / fit.scale - 184.0 - source.min.x).max(source.width());
+    let columns = (width / (source.width() / 4.0)).floor().max(4.0) as usize;
+    // Distribute the remainder across every cell so the grid reaches the frame.
+    (
+        columns,
+        Vec2::new(width / columns as f32, source.height() / 3.0),
+    )
+}
 pub fn pack(dimensions: &[UVec2], columns: usize) -> Vec<UVec2> {
     let mut used = vec![false; columns * 3];
     let mut result = Vec::new();
@@ -559,10 +568,7 @@ pub fn draw(
             .insert(Hover("Тело · бронежилет".into()));
     }
     let source_grid = r("r_inventory");
-    let cell = source_grid.size() / Vec2::new(4., 3.);
-    let columns = ((fit.screen.x / fit.scale - 184.0 - source_grid.min.x) / cell.x)
-        .floor()
-        .max(4.0) as usize;
+    let (columns, cell) = pack_grid(source_grid, fit);
     for y in 0..3 {
         for x in 0..columns {
             let p = source_grid.min + cell * Vec2::new(x as f32, y as f32);
@@ -849,6 +855,27 @@ pub fn hover(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn backpack_grid_fills_frame_at_hd_full_hd_and_ultrawide_sizes() {
+        let source = Rect::new(232.0, 68.0, 614.0, 191.0);
+        for screen in [
+            Vec2::new(1280.0, 720.0),
+            Vec2::new(1920.0, 1080.0),
+            Vec2::new(1680.0, 720.0),
+            Vec2::new(3440.0, 1440.0),
+        ] {
+            let fit = Fit::new(screen);
+            let (columns, cell) = pack_grid(source, fit);
+            let end = fit
+                .rect(Rect::from_corners(
+                    source.min,
+                    source.min + cell * Vec2::new(columns as f32, 3.0),
+                ))
+                .max;
+            assert!((end.x - (screen.x - 184.0 * fit.scale)).abs() < 0.001);
+            assert!((end.y - fit.rect(source).max.y).abs() < 0.001);
+        }
+    }
     #[test]
     fn malformed_unused_description_does_not_hide_equipment() {
         let bytes=b"OBJECT_DEF outfit\nOBJECT_NAME \"Flak Jacket\"\nOBJECT_DESC_LINE \"original missing quote\nOBJECT_MODEL Vest\nOBJECT_SLOT_USE 2 2\n";

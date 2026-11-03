@@ -10,6 +10,32 @@ use bevy::{
 };
 use shadow_formats::{AssetCatalog, SmfMesh};
 use std::error::Error;
+fn texture_coordinates(source: &SmfMesh) -> Vec<[f32; 2]> {
+    let mut uv = source.vertices.iter().map(|v| v.uv).collect::<Vec<_>>();
+    let texture = source.texture.replace('\\', "/").to_ascii_lowercase();
+    if !matches!(
+        texture.rsplit('/').next(),
+        Some("gcratecomp.bmp" | "gcratecomp_dam.bmp")
+    ) {
+        return uv;
+    }
+    // The original GRANITE crate repeats the front label on its rear face
+    // with mirrored UVs. Repair only that exact source mapping; custom SMFs
+    // that already corrected it and every other material retain their UVs.
+    for face in &source.faces {
+        if face.indices.iter().all(|&i| {
+            let v = &source.vertices[i as usize];
+            (v.position[1] - 50.0).abs() < 0.001
+                && (0.49..=1.0).contains(&v.uv[1])
+                && (v.uv[0] - (0.5 + v.position[0] * 0.00499)).abs() < 0.0002
+        }) {
+            for &index in &face.indices {
+                uv[index as usize][0] = 1.0 - source.vertices[index as usize].uv[0];
+            }
+        }
+    }
+    uv
+}
 pub fn mesh(source: &SmfMesh, transform: Mat4) -> Mesh {
     let positions = source
         .vertices
@@ -52,10 +78,7 @@ pub fn mesh(source: &SmfMesh, transform: Mat4) -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        source.vertices.iter().map(|v| v.uv).collect::<Vec<_>>(),
-    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, texture_coordinates(source))
     .with_inserted_indices(Indices::U32(indices))
 }
 pub struct Texture {
@@ -354,6 +377,50 @@ mod tests {
         assert_eq!(alpha(&loaded.image), [255, 64, 0, 128]);
     }
 
+    #[test]
+    fn granite_rear_label_is_readable_without_flipping_front_or_custom_uvs() {
+        let mut source = SmfMesh {
+            name: "Gcrate01".into(),
+            texture: "GcrateCOMP.BMP".into(),
+            vertices: [
+                ([-100.0, 50.0, -50.0], [0.001, 0.997]),
+                ([100.0, 50.0, -50.0], [0.999, 0.997]),
+                ([100.0, 50.0, 50.0], [0.999, 0.497]),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (position, uv))| SmfVertex {
+                id: i as u32,
+                position,
+                uv,
+                color: 0,
+                specular: 0,
+                normal: None,
+            })
+            .collect(),
+            faces: vec![SmfFace {
+                id: 0,
+                indices: [0, 1, 2],
+            }],
+        };
+        let rear = texture_coordinates(&source);
+        assert!(rear[0][0] > rear[1][0]); // viewed from +Y, camera right is -X.
+        for v in &mut source.vertices {
+            v.position[1] = -50.0;
+        }
+        assert_eq!(
+            texture_coordinates(&source),
+            source.vertices.iter().map(|v| v.uv).collect::<Vec<_>>()
+        );
+        for (v, uv) in source.vertices.iter_mut().zip(rear) {
+            v.position[1] = 50.0;
+            v.uv = uv;
+        }
+        assert_eq!(
+            texture_coordinates(&source),
+            source.vertices.iter().map(|v| v.uv).collect::<Vec<_>>()
+        );
+    }
     #[test]
     fn mesh_preserves_size_and_adjusts_winding_and_normals_for_a_mirror() {
         let source = SmfMesh {

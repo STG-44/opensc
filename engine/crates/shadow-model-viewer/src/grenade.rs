@@ -261,7 +261,7 @@ impl Grenade {
         if !self.available || self.collected || p.playback.paused {
             return false;
         }
-        if p.order(grid, self.position.unwrap(), false) {
+        if p.order_interaction(grid, self.position.unwrap()) {
             self.pickup_ordered = true;
             self.order = None;
             true
@@ -287,7 +287,7 @@ impl Grenade {
             return false;
         }
         self.cancel(p);
-        if !p.order(grid, target, false) {
+        if !p.order_interaction(grid, target) {
             return false;
         }
         self.message.clear();

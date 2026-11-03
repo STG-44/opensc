@@ -90,7 +90,7 @@ impl Uzi {
         if self.collected || p.playback.paused {
             return false;
         }
-        self.ordered = p.order(grid, self.position, false);
+        self.ordered = p.order_interaction(grid, self.position);
         self.ordered
     }
     pub fn cancel(&mut self, p: &mut player::Player) {

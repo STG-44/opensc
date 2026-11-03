@@ -18,12 +18,17 @@ pub enum Phase {
     Approaching(usize),
     Lifting(usize),
     Carrying(usize),
+    Dropping(usize),
 }
 #[derive(Resource)]
 pub struct Carry {
     pub phase: Phase,
     lift: usize,
     callback: f32,
+    release: usize,
+    release_callback: f32,
+    drop_point: Vec3,
+    release_origin: Option<(Vec3, crate::motion::Pose)>,
     movement: [usize; 3],
     body_clips: Vec<usize>,
     shoulder: Anchor,
@@ -118,6 +123,16 @@ impl Carry {
         let callback = frame as f32 / clip.fps;
         let lift_index = actor.clips.len();
         actor.clips.push(clip);
+        // The original asset set has no dedicated body-release sequence. Reuse
+        // the pickup poses in reverse, with the attachment callback reversed too.
+        let release = actor.clips.len();
+        let source = &actor.clips[lift_index];
+        let release_callback = source.duration() - callback;
+        actor.clips.push(Clip {
+            name: format!("{} (release reversed)", source.name),
+            fps: source.fps,
+            frames: source.frames.iter().rev().cloned().collect(),
+        });
         let idle = load(catalog, &motions[1].words[1], actor)?;
         let idle_index = actor.clips.len();
         actor.clips.push(idle);
@@ -151,11 +166,15 @@ impl Carry {
             body_clips.push(guard.clips.len());
             guard.clips.push(clip);
         }
-        actor.source["body_carry"] = serde_json::json!({"pickup_callback_frame":frame,"pickup_callback_seconds":callback,"body_sequence":"MSEQ_BODY_BEING_CARRIED","attachment_original_verified":false});
+        actor.source["body_carry"] = serde_json::json!({"pickup_callback_frame":frame,"pickup_callback_seconds":callback,"body_sequence":"MSEQ_BODY_BEING_CARRIED","attachment_original_verified":false,"release_animation":"reversed source pickup; reconstructed, not an original release sequence","release_callback_seconds":release_callback});
         Ok(Self {
             phase: Phase::Idle,
             lift: lift_index,
             callback,
+            release,
+            release_callback,
+            drop_point: Vec3::ZERO,
+            release_origin: None,
             movement,
             body_clips,
             shoulder,
@@ -180,7 +199,7 @@ impl Carry {
         {
             return false;
         }
-        if actor.order(grid, combat.guard_at(target).guard.position, false) {
+        if actor.order_interaction(grid, combat.guard_at(target).guard.position) {
             self.phase = Phase::Approaching(target);
             self.message = "Подойти и поднять тело".into();
             true
@@ -201,7 +220,7 @@ impl Carry {
     pub fn drop_body(
         &mut self,
         actor: &mut Player,
-        combat: &mut Combat,
+        _combat: &mut Combat,
         grid: &TerrainGrid,
         geometry: &Pickup,
     ) -> bool {
@@ -221,19 +240,19 @@ impl Carry {
             self.message = "Нет места, чтобы положить тело".into();
             return false;
         }
-        let guard = combat.guard_mut(target);
-        guard.carried = false;
-        guard.guard.position = point;
-        guard.guard.heading = actor.heading;
-        guard.guard.playback.selected = 4;
-        guard.guard.playback.pose = guard.guard.clips[4].sample(guard.guard.clips[4].duration());
-        actor.carry_movement = None;
-        actor.weapon = self.saved_weapon.take();
-        actor.action = None;
-        actor.destination = None;
-        actor.playback.select(&actor.clips, actor.idle_clip());
-        self.phase = Phase::Idle;
-        self.message = "Тело положено".into();
+        let start = actor
+            .action
+            .filter(|(i, _)| *i == self.lift)
+            .map(|(_, t)| (actor.clips[self.release].duration() - t).max(0.0))
+            .unwrap_or(0.0);
+        self.drop_point = point;
+        self.release_origin = None;
+        actor.begin_action(self.release);
+        actor.action = Some((self.release, start));
+        actor.playback.seconds = start;
+        actor.playback.pose = actor.clips[self.release].sample(start);
+        self.phase = Phase::Dropping(target);
+        self.message = "Джон кладёт тело".into();
         true
     }
     pub fn tick(&mut self, actor: &mut Player, combat: &mut Combat, geometry: &Pickup) {
@@ -290,8 +309,41 @@ impl Carry {
                     actor.playback.select(&actor.clips, actor.idle_clip());
                 }
             }
+            Phase::Dropping(target) => {
+                let duration = actor.clips[self.release].duration();
+                let seconds = actor
+                    .action
+                    .filter(|(i, _)| *i == self.release)
+                    .map_or(duration, |(_, t)| t);
+                if seconds >= self.release_callback {
+                    let guard = combat.guard_mut(target);
+                    let (position, pose) = self.release_origin.get_or_insert_with(|| {
+                        (guard.guard.position, guard.guard.playback.pose.clone())
+                    });
+                    let weight = ((seconds - self.release_callback)
+                        / (duration - self.release_callback).max(0.001))
+                    .clamp(0.0, 1.0);
+                    guard.carried = false;
+                    guard.guard.position = position.lerp(self.drop_point, weight);
+                    guard.guard.playback.selected = 4;
+                    let rest = guard.guard.clips[4].sample(guard.guard.clips[4].duration());
+                    guard.guard.playback.pose = pose.blend(&rest, weight);
+                }
+                if seconds >= duration {
+                    actor.carry_movement = None;
+                    actor.weapon = self.saved_weapon.take();
+                    actor.action = None;
+                    actor.destination = None;
+                    actor.playback.select(&actor.clips, actor.idle_clip());
+                    self.release_origin = None;
+                    self.phase = Phase::Idle;
+                    self.message = "Тело положено".into();
+                }
+            }
         }
-        if let Phase::Carrying(target) = self.phase {
+        if let Phase::Carrying(target) | Phase::Dropping(target) = self.phase
+            && self.release_origin.is_none()
+        {
             let shoulder = self.shoulder.world(actor);
             let guard = combat.guard_mut(target);
             guard.guard.position = actor.position;
@@ -385,6 +437,7 @@ pub fn input(
     if keys.just_pressed(KeyCode::Home) {
         carry.phase = Phase::Idle;
         carry.saved_weapon = None;
+        carry.release_origin = None;
         carry.message.clear();
         actor.carry_movement = None;
         for i in 0..combat.guard_count() {
@@ -393,6 +446,12 @@ pub fn input(
         return;
     }
     if actor.playback.paused || !actor.selected {
+        return;
+    }
+    if matches!(carry.phase, Phase::Dropping(_)) {
+        mouse.reset(MouseButton::Left);
+        keys.reset(KeyCode::KeyD);
+        keys.reset(KeyCode::KeyH);
         return;
     }
     if keys.just_pressed(KeyCode::KeyD) && matches!(carry.phase, Phase::Carrying(_)) {
@@ -552,6 +611,10 @@ mod tests {
             phase: Phase::Idle,
             lift,
             callback: 0.5,
+            release: lift,
+            release_callback: 0.5,
+            drop_point: Vec3::ZERO,
+            release_origin: None,
             movement: [0, 1, 2],
             body_clips: vec![4],
             shoulder: Anchor(Vec::new()),
@@ -625,6 +688,19 @@ mod tests {
             actor.heading = std::f32::consts::PI;
             assert!(carry.drop_body(&mut actor, &mut combat, &grid, &geometry));
         }
+        assert_eq!(carry.phase, Phase::Dropping(0));
+        assert!(combat.carried && actor.carry_movement.is_some());
+        actor.step(&ButtonInput::default(), 0.05, &grid);
+        carry.tick(&mut actor, &mut combat, &geometry);
+        assert!(combat.carried && actor.weapon.is_none());
+        actor.playback.paused = true;
+        actor.step(&ButtonInput::default(), 0.6, &grid);
+        carry.tick(&mut actor, &mut combat, &geometry);
+        assert_eq!(carry.phase, Phase::Dropping(0));
+        assert!(combat.carried);
+        actor.playback.paused = false;
+        actor.step(&ButtonInput::default(), 1.0, &grid);
+        carry.tick(&mut actor, &mut combat, &geometry);
         assert!(!combat.carried && actor.carry_movement.is_none());
         assert_eq!(actor.weapon.as_deref(), Some("knife"));
         assert_eq!(carry.phase, Phase::Idle);

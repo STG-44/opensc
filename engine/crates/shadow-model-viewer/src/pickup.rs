@@ -20,6 +20,7 @@ struct Geometry {
     part: String,
     id: [i32; 2],
     opaque: bool,
+    solid: bool,
     triangles: Vec<[Vec3; 3]>,
 }
 #[derive(Resource)]
@@ -168,6 +169,7 @@ impl Pickup {
                     id: instance.id,
                     part: part.name.clone(),
                     opaque: part.alpha_mode == AlphaMode::Opaque,
+                    solid: !instance.inventory,
                     triangles,
                 });
             }
@@ -198,7 +200,7 @@ impl Pickup {
         if self.collected {
             return false;
         }
-        if actor.order(grid, self.position, false) {
+        if actor.order_interaction(grid, self.position) {
             self.ordered = true;
             true
         } else {
@@ -257,6 +259,23 @@ impl Pickup {
                 *triangle = triangle.map(|p| delta.transform_point3(p));
             }
         }
+    }
+    pub fn guard_movement(
+        &self,
+        actor: &mut player::Player,
+        previous: Vec3,
+        grid: &shadow_formats::TerrainGrid,
+        ignored: impl Fn([i32; 2]) -> bool,
+    ) {
+        crate::obstacles::guard(
+            actor,
+            previous,
+            grid,
+            self.geometry
+                .iter()
+                .filter(|g| g.solid && !ignored(g.id))
+                .flat_map(|g| g.triangles.iter().copied()),
+        );
     }
     pub fn segment_hit(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
         let delta = to - from;
@@ -1539,6 +1558,13 @@ pub(crate) mod tests {
         )
     }
     #[test]
+    fn picking_up_an_item_keeps_the_running_order() {
+        let (mut item, mut actor, _, grid) = fixture();
+        actor.running = true;
+        assert!(item.order(&mut actor, &grid));
+        assert!(actor.running);
+    }
+    #[test]
     fn moving_vehicle_geometry_clears_old_occlusion_and_home_restores_it() {
         let (mut geometry, _, _, _) = fixture();
         let id = [1, -767];
@@ -1546,6 +1572,7 @@ pub(crate) mod tests {
             part: String::new(),
             id,
             opaque: true,
+            solid: true,
             triangles: vec![[
                 Vec3::new(-1.0, 0.0, -2.0),
                 Vec3::new(1.0, 0.0, -2.0),
@@ -1659,6 +1686,7 @@ pub(crate) mod tests {
             part: String::new(),
             id: [9, 9],
             opaque: true,
+            solid: true,
             triangles: vec![
                 [
                     Vec3::new(0.9, 0.0, -2.0),
@@ -1699,6 +1727,7 @@ pub(crate) mod tests {
             part: String::new(),
             id: tool,
             opaque: true,
+            solid: true,
             triangles: vec![triangle],
         });
         let (origin, target) = (Vec3::Z, Vec3::NEG_Z);
@@ -1708,6 +1737,7 @@ pub(crate) mod tests {
             part: String::new(),
             id: [1, 100],
             opaque: true,
+            solid: true,
             triangles: vec![triangle.map(|v| v + Vec3::Z * 0.5)],
         });
         assert!(!item.clear_line_ignoring(origin, target, Some(tool)));
@@ -1728,6 +1758,7 @@ pub(crate) mod tests {
                 part: String::new(),
                 id: [1, 3],
                 opaque: true,
+                solid: true,
                 triangles: vec![[Vec3::ZERO, Vec3::X, Vec3::Z]],
             }],
         };
@@ -1744,6 +1775,7 @@ pub(crate) mod tests {
                 id,
                 part: part.into(),
                 opaque: true,
+                solid: true,
                 triangles: vec![triangle],
             });
         }

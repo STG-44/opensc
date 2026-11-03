@@ -272,7 +272,7 @@ impl Gate {
                 < (p.position - self.sides[0]).length_squared(),
         );
         p.request_posture(crate::stance::Posture::Stand);
-        if p.order(grid, self.sides[self.side], false) {
+        if p.order_interaction(grid, self.sides[self.side]) {
             self.approaching = true;
             self.message = "Подойти к воротам".into();
             true
@@ -624,7 +624,7 @@ pub fn native_smoke(
                     .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
                     .observe(bevy::render::view::screenshot::save_to_disk(path.clone()));
             }
-            p.order(grid, gate.sides[1], false);
+            p.order_interaction(grid, gate.sides[1]);
             s.stage = 5;
         }
         5 if p.destination.is_none() && s.frames > 5 => {

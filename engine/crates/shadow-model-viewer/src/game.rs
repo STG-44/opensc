@@ -20,6 +20,7 @@ mod menu_motion;
 mod motion;
 mod movie;
 mod normals;
+mod obstacles;
 mod orders;
 mod party;
 mod pickup;

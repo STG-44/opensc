@@ -109,6 +109,9 @@ pub fn prepare(catalog: &AssetCatalog, p: &mut player::Player) -> Result<(), Box
             Some("MCB_PICK_UP_ITEM"),
         )?;
     }
+    // Use the original looping sequences, not the walk-80 preview motion.
+    walk[0] = load("MSEQ_WALK", None)?.0;
+    run[0] = load("MSEQ_RUN", None)?.0;
     walk[1] = load("MSEQ_CROUCH_WALK", None)?.0;
     run[1] = load("MSEQ_CROUCH_RUN", None)?.0;
     walk[2] = load("MSEQ_BELLY_CRAWL", None)?.0;

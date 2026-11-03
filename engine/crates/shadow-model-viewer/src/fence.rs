@@ -499,7 +499,7 @@ impl Fence {
             return false;
         }
         self.cancel(p);
-        if p.order(grid, self.tool_position, false) {
+        if p.order_interaction(grid, self.tool_position) {
             self.pickup_ordered = true;
             true
         } else {
@@ -524,7 +524,7 @@ impl Fence {
             self.sides
         };
         let side = self.nearest(p.position, points);
-        if !p.order(grid, points[side], false) {
+        if !p.order_interaction(grid, points[side]) {
             return false;
         }
         self.phase = Some(if self.cut {
@@ -596,6 +596,9 @@ impl Fence {
         }) || camera
             .world_to_viewport(tr, center)
             .is_ok_and(|v| v.distance(cursor) <= radius)
+    }
+    pub fn handles_collision(&self, id: [i32; 2]) -> bool {
+        self.barriers.iter().any(|b| b.id == id)
     }
     pub fn movement_hit(&self, from: Vec3, to: Vec3) -> Option<f32> {
         if !from.is_finite() || !to.is_finite() || flat(to - from).length_squared() < 1e-10 {
