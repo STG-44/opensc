@@ -2234,13 +2234,14 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "opensc-launcher"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
  "eframe",
  "flate2",
  "image",
+ "opensc-localization",
  "opensc-report-protocol",
  "reqwest",
  "rfd",
@@ -2252,6 +2253,15 @@ dependencies = [
  "url",
  "walkdir",
  "winresource",
+]
+
+[[package]]
+name = "opensc-localization"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

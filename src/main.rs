@@ -113,7 +113,18 @@ fn run() -> Result<()> {
                 saved.data_path = data_path.to_string_lossy().into_owned();
                 saved.save(&root)?;
             }
-            let installed = updater::Installed::load(&root)?.context("Движок ещё не установлен")?;
+            let available = updater::check(&config.manifest_url)?
+                .context("В выбранном канале пока нет сборки")?;
+            let installed = updater::Installed::load(&root)?;
+            let installed = if let Some(installed) = installed
+                && installed.release.fingerprint()? == available.release.fingerprint()?
+            {
+                installed
+            } else {
+                updater::install(&available, &root, &AtomicBool::new(false), |p| {
+                    eprintln!("{}: {} / {} байт", p.file, p.downloaded, p.total)
+                })?
+            };
             let status = installed.launch(&root, &data_path)?.wait()?;
             anyhow::ensure!(
                 status.success(),

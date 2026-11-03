@@ -13,6 +13,7 @@ use bevy::{
     text::FontSize,
     window::{MonitorSelection, WindowMode, WindowResizeConstraints},
 };
+use opensc_localization::Locale;
 use shadow_formats::{AssetCatalog, MenuLayout};
 use std::{collections::HashSet, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
@@ -99,6 +100,7 @@ struct Context {
     catalog: Arc<AssetCatalog>,
     layout: MenuLayout,
     settings_path: PathBuf,
+    language_locked: bool,
     saved: Preferences,
     draft: Preferences,
     notice: String,
@@ -183,7 +185,7 @@ struct Config {
     smoke: Option<PathBuf>,
     screen: Screen,
     frame: Option<usize>,
-    english: Option<bool>,
+    language: Option<Locale>,
     movie: Option<String>,
     movie_time: Option<Duration>,
     movie_report: Option<PathBuf>,
@@ -220,8 +222,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             format!("Настройки не прочитаны: {e}"),
         ),
     };
-    if let Some(english) = config.english {
-        saved.english = english;
+    if let Some(language) = config.language {
+        saved.language = language;
     }
     if let Some(size) = config.size {
         saved.window_size = size;
@@ -269,6 +271,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         catalog,
         layout,
         settings_path: config.settings,
+        language_locked: config.language.is_some() && config.locale_smoke.is_none(),
         saved: saved.clone(),
         draft: saved.clone(),
         notice,
@@ -282,7 +285,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         ..default()
     })
     .insert_resource(saved.clone())
-    .insert_resource(crate::localization::Language::from_english(saved.english))
+    .insert_resource(crate::localization::Language(saved.language))
     .add_plugins(crate::localization::LocalizationPlugin)
     .insert_resource(training::CameraOptions {
         speed: saved.camera_speed,
@@ -686,7 +689,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if args.iter().any(|a| a == "--help") {
         println!("--data PATH — совместимость с OpenSC Launcher 0.2.0.");
         println!(
-            "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language ru|en] [--window WIDTHxHEIGHT] [--screen main|options|new-game|load-game|multiplayer|quit|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json] [--locale-smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
+            "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language CODE] [--window WIDTHxHEIGHT] [--screen main|options|new-game|load-game|multiplayer|quit|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json] [--locale-smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
         );
         println!(
             "Native checks: --input-smoke-json FILE.json or --radar-smoke-json FILE.json; each requires --screen main and an isolated --settings FILE.json."
@@ -704,7 +707,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         smoke: None,
         screen: Screen::Main,
         frame: None,
-        english: None,
+        language: None,
         movie: None,
         movie_time: None,
         movie_report: None,
@@ -771,13 +774,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                 }
                 config.movie_time = Some(Duration::from_secs_f64(seconds));
             }
-            "--language" => {
-                config.english = Some(match value.as_str() {
-                    "ru" => false,
-                    "en" => true,
-                    _ => return Err("язык должен быть ru или en".into()),
-                })
-            }
+            "--language" => config.language = Some(Locale::parse(value)?),
             "--screen" => {
                 config.screen = match value.as_str() {
                     "main" => Screen::Main,
@@ -881,7 +878,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                 "--locale-smoke-json requires --settings with an isolated test file".into(),
             );
         }
-        config.english = Some(true);
+        config.language = Some(Locale::English);
     }
     Ok(Some(config))
 }
@@ -1527,7 +1524,7 @@ fn handle_actions(
                 navigation.dirty = true;
             }
             Action::RefreshSaves if *state.get() == Screen::LoadGame => {
-                context.notice = if context.saved.english {
+                context.notice = if context.saved.language == Locale::English {
                     "List refreshed: no compatible saves."
                 } else {
                     "Список обновлён: совместимых сохранений нет."
@@ -1571,7 +1568,15 @@ fn handle_actions(
                 context.draft.edge_scroll = !context.draft.edge_scroll
             }
             Action::Language if *state.get() == Screen::Options => {
-                context.draft.english = !context.draft.english
+                if context.language_locked {
+                    context.notice = "Язык выбирается в лаунчере.".into();
+                } else {
+                    context.draft.language = if context.draft.language == Locale::English {
+                        Locale::Russian
+                    } else {
+                        Locale::English
+                    };
+                }
             }
             Action::Window if *state.get() == Screen::Options => {
                 context.draft.fullscreen = !context.draft.fullscreen
@@ -1607,7 +1612,7 @@ fn handle_actions(
                             context.saved.window_size[1] as f32,
                         );
                         window.mode = window_mode(context.saved.fullscreen);
-                        context.notice = if context.saved.english {
+                        context.notice = if context.saved.language == Locale::English {
                             "Settings saved"
                         } else {
                             "Настройки сохранены"
@@ -1651,12 +1656,12 @@ fn sync_language(
     state: Res<State<Screen>>,
     mut language: ResMut<crate::localization::Language>,
 ) {
-    let english = if *state.get() == Screen::Options {
-        context.draft.english
+    let value = if *state.get() == Screen::Options {
+        context.draft.language
     } else {
-        context.saved.english
+        context.saved.language
     };
-    language.set_if_neq(crate::localization::Language::from_english(english));
+    language.set_if_neq(crate::localization::Language(value));
 }
 fn apply_camera(
     state: Res<State<Screen>>,
@@ -1695,7 +1700,7 @@ fn fit_ui(
         Option<&ButtonCaption>,
         Option<&Placement>,
     )>,
-    mut previous: Local<Option<([f32; 2], f32, Screen, usize)>>,
+    mut previous: Local<Option<([f32; 2], f32, Screen, usize, Locale)>>,
 ) {
     let text_scale = if *state.get() == Screen::Options {
         context.draft.text_scale
@@ -1707,6 +1712,11 @@ fn fit_ui(
         text_scale,
         *state.get(),
         context.frame,
+        if *state.get() == Screen::Options {
+            context.draft.language
+        } else {
+            context.saved.language
+        },
     );
     // Два слоя могут иметь разные размеры в overrides; подгоняем каждый отдельно.
     // Это делается и внутри перехода, когда номер основного кадра ещё не изменился.
@@ -1759,14 +1769,19 @@ fn fit_ui(
         {
             // Основной и контурные слои получают одинаковую ограниченную кегль.
             // Длинные русские подписи и масштаб 150% не выходят из кнопки.
-            let chars = caption
-                .ru
-                .chars()
-                .count()
-                .max(caption.en.chars().count())
-                .max(1);
+            let language = if *state.get() == Screen::Options {
+                context.draft.language
+            } else {
+                context.saved.language
+            };
+            let chars = language.translate(&caption.ru).chars().count().max(1);
             if chars > 1 {
-                size = size.min(placement.size.x / (chars as f32 * 0.75));
+                let width_per_char = if language.cjk_font().is_some() {
+                    1.05
+                } else {
+                    0.75
+                };
+                size = size.min(placement.size.x / (chars as f32 * width_per_char));
             }
         }
         font.font_size = FontSize::Px(size * fit.scale);
@@ -1790,7 +1805,7 @@ fn update_captions(
                     "Настройки сохранены" | "Settings saved"
                 ) =>
             {
-                if p.english {
+                if p.language == Locale::English {
                     "Settings saved"
                 } else {
                     "Настройки сохранены"
@@ -1798,17 +1813,11 @@ fn update_captions(
                 .into()
             }
             Some(Action::Notice) => context.notice.clone(),
-            Some(Action::Language) => {
-                if p.english {
-                    "MENU LANGUAGE: ENGLISH".into()
-                } else {
-                    "ЯЗЫК МЕНЮ: РУССКИЙ".into()
-                }
-            }
+            Some(Action::Language) => format!("ЯЗЫК ИНТЕРФЕЙСА: {}", p.language.native_name()),
             Some(Action::MasterVolume) => {
                 format!(
                     "{}: {:.0}%",
-                    if p.english {
+                    if p.language == Locale::English {
                         "MASTER VOLUME"
                     } else {
                         "ОБЩАЯ ГРОМКОСТЬ"
@@ -1819,7 +1828,7 @@ fn update_captions(
             Some(Action::CameraSpeed) => {
                 format!(
                     "{}: {:.0}%",
-                    if p.english {
+                    if p.language == Locale::English {
                         "CAMERA SPEED"
                     } else {
                         "СКОРОСТЬ КАМЕРЫ"
@@ -1830,14 +1839,18 @@ fn update_captions(
             Some(Action::EdgeScroll) => {
                 format!(
                     "{}: {}",
-                    if p.english {
+                    if p.language == Locale::English {
                         "SCREEN EDGE SCROLLING"
                     } else {
                         "ПРОКРУТКА У КРАЯ ЭКРАНА"
                     },
                     if p.edge_scroll {
-                        if p.english { "ON" } else { "ВКЛ" }
-                    } else if p.english {
+                        if p.language == Locale::English {
+                            "ON"
+                        } else {
+                            "ВКЛ"
+                        }
+                    } else if p.language == Locale::English {
                         "OFF"
                     } else {
                         "ВЫКЛ"
@@ -1845,7 +1858,7 @@ fn update_captions(
                 )
             }
             Some(Action::Window) => {
-                if p.english {
+                if p.language == Locale::English {
                     format!(
                         "DISPLAY: {}",
                         if p.fullscreen {
@@ -1866,14 +1879,14 @@ fn update_captions(
                 }
             }
             Some(Action::TextSize) => {
-                if p.english {
+                if p.language == Locale::English {
                     format!("TEXT SIZE: {:.0}%", p.text_scale * 100.0)
                 } else {
                     format!("РАЗМЕР ТЕКСТА: {:.0}%", p.text_scale * 100.0)
                 }
             }
             Some(Action::Resolution) => {
-                let label = if p.english {
+                let label = if p.language == Locale::English {
                     "RESOLUTION"
                 } else {
                     "РАЗРЕШЕНИЕ"
@@ -1881,7 +1894,7 @@ fn update_captions(
                 format!("{label}: {} × {}", p.window_size[0], p.window_size[1])
             }
             Some(Action::Background) => {
-                if p.english {
+                if p.language == Locale::English {
                     format!(
                         "ANIMATED BACKGROUND: {}",
                         if p.animate_background { "ON" } else { "OFF" }
@@ -1898,14 +1911,14 @@ fn update_captions(
                 }
             }
             Some(Action::Apply) => {
-                if p.english {
+                if p.language == Locale::English {
                     "APPLY".into()
                 } else {
                     "ПРИМЕНИТЬ".into()
                 }
             }
             _ => {
-                if p.english {
+                if p.language == Locale::English {
                     caption.en.clone()
                 } else {
                     caption.ru.clone()
@@ -2509,7 +2522,7 @@ fn training_finished(
     mut next: ResMut<NextState<Screen>>,
 ) {
     if tutorial.is_some_and(|t| t.end_campaign.as_deref() == Some("EOC_RETURN_TO_MAIN_MENU")) {
-        context.notice = if context.saved.english {
+        context.notice = if context.saved.language == Locale::English {
             "Training complete"
         } else {
             "Обучение завершено"
@@ -2574,7 +2587,8 @@ mod tests {
             .insert_resource(Context {
                 catalog: Arc::new(AssetCatalog::open(&path, None).unwrap()),
                 layout: MenuLayout::from_bytes(b"WINDOW_BASE_DX 854\nWINDOW_BASE_DY 480\nDEFINE_USER_IVAR button_offset_x 30\nDEFINE_USER_IVAR button_offset_y 5\nDEFINE_BUTTON_ADVICE b_training 529 160 0 0\nDEFINE_BUTTON_ADVICE b_exit 509 320 0 0\nGEOMETRY_JPG_NAME frame1\n").unwrap(),
-                settings_path: path.join("settings.json"), saved: Preferences::default(), draft: Preferences::default(), notice: String::new(), frame: 4, options_return: Screen::Main,
+                settings_path: path.join("settings.json"),
+                language_locked: false, saved: Preferences::default(), draft: Preferences::default(), notice: String::new(), frame: 4, options_return: Screen::Main,
             });
         let backgrounds = (0..5)
             .map(|_| {
@@ -2881,6 +2895,7 @@ mod tests {
                         catalog: catalog.clone(),
                         layout: MenuLayout::from_bytes(source.as_bytes()).unwrap(),
                         settings_path: path.join("settings.json"),
+                        language_locked: false,
                         saved: Preferences::default(),
                         draft: Preferences::default(),
                         notice: String::new(),
@@ -3156,6 +3171,7 @@ mod tests {
                 catalog,
                 layout,
                 settings_path: settings.clone(),
+                language_locked: false,
                 saved: saved.clone(),
                 draft: saved,
                 notice: String::new(),
@@ -3204,7 +3220,7 @@ mod tests {
         assert_eq!(saved.camera_speed, 1.25);
         assert!(!saved.edge_scroll);
         assert_eq!(app.world().resource::<Preferences>(), &saved);
-        assert!(saved.english && saved.fullscreen);
+        assert!(saved.language == Locale::English && saved.fullscreen);
         assert_eq!(saved.text_scale, 1.25);
         assert_eq!(saved.window_size, [1366, 768]);
         assert_eq!(app.world().resource::<Context>().saved, saved);

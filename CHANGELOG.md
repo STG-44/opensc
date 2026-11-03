@@ -3,6 +3,17 @@
 OpenSC uses the website's test update channel. Engine and launcher versions
 are independent.
 
+## Launcher 0.4.2 and engine 0.1.0-test.20261103.3 — 2026-11-03
+
+- Check updates on launcher opening and before Play, with no periodic polling.
+- Save an explicit Stable/Test engine channel; default new and migrated profiles to Stable.
+- Complete the selected channel update before starting the game, including switching back to an older stable release.
+- Simplify launcher settings and remove duplicate main-screen actions.
+- Share a saved language between the launcher and game across 15 UI locales, including Ukrainian, Simplified Chinese and Traditional Chinese.
+- Bundle CJK UI fonts and preserve dynamic values and controls in translated text.
+
+See [channel policy](docs/UPDATE-CHANNELS.md) and [translation scope](docs/LOCALIZATION.md).
+
 ## Engine 0.1.0-test.20261103.2 — 2026-11-03
 
 - Restore live team markers, detected enemies and the camera footprint on the radar.

@@ -1,12 +1,13 @@
 [package]
 license = "MIT"
 name = "opensc-launcher"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.99"
 description = "Launcher and update client for the Shadow Company engine recreation"
 
 [dependencies]
+opensc-localization = { path = "engine/crates/opensc-localization" }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 shadow-formats = { path = "engine/crates/shadow-formats" }
 ed25519-dalek = "=3.0.0"

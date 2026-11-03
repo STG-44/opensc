@@ -59,7 +59,9 @@ def source_hashes():
     paths += list((PROJECT / "crates").rglob("*.rs"))
     paths += list((PROJECT / "crates").rglob("Cargo.toml"))
     paths += list((PROJECT / "crates").rglob("*.ttf"))
+    paths += list((PROJECT / "crates/opensc-localization/assets/fonts").glob("*.ttf.gz"))
     paths += list((PROJECT / "crates/shadow-model-viewer/assets/locales").glob("*.json"))
+    paths += list((PROJECT / "crates/opensc-localization/assets/locales").glob("*.json"))
     return {p.relative_to(PROJECT).as_posix(): digest(p) for p in sorted(paths)}
 
 
@@ -69,6 +71,7 @@ def notices(metadata, destination):
             "\nOpenSC project source — MIT License\n",
             (PROJECT / "LICENSE").read_text(encoding="utf-8"),
             "\nDependency metadata for the selected native target.\n"]
+    text += ["\nBundled modified Noto Sans regional UI fonts — SIL Open Font License 1.1\n", (PROJECT/"crates/opensc-localization/assets/fonts/OFL.txt").read_text(encoding="utf-8")]
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
         if package["source"] is None:
             continue

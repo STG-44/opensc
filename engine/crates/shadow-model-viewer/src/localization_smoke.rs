@@ -179,7 +179,9 @@ pub(super) fn run(world: &mut World) {
         }
         5 if ready && *world.resource::<Language>() == Language::Russian => {
             same_inventory(world, &smoke, "Инвентарь");
-            assert!(world.resource::<Context>().saved.english);
+            assert!(
+                world.resource::<Context>().saved.language == opensc_localization::Locale::English
+            );
             smoke
                 .checks
                 .push("draft-language-updates-existing-widget-without-recreating-scene".into());
@@ -197,7 +199,10 @@ pub(super) fn run(world: &mut World) {
             action(world, Action::Apply);
             smoke.advance();
         }
-        8 if ready && !world.resource::<Context>().saved.english => {
+        8 if ready
+            && world.resource::<Context>().saved.language
+                != opensc_localization::Locale::English =>
+        {
             action(world, Action::Language);
             smoke.stage = 21;
             smoke.changed = smoke.frames;
@@ -241,7 +246,10 @@ pub(super) fn run(world: &mut World) {
             action(world, Action::Apply);
             smoke.advance();
         }
-        13 if ready && world.resource::<Context>().saved.english => {
+        13 if ready
+            && world.resource::<Context>().saved.language
+                == opensc_localization::Locale::English =>
+        {
             action(world, Action::Back);
             smoke.advance();
         }
@@ -267,7 +275,8 @@ pub(super) fn run(world: &mut World) {
             assert!(
                 Preferences::load(&world.resource::<Context>().settings_path)
                     .unwrap()
-                    .english
+                    .language
+                    == opensc_localization::Locale::English
             );
             action(world, Action::Pause);
             smoke.advance();

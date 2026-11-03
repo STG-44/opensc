@@ -13,6 +13,8 @@ struct Server {
     source: String,
     release: Arc<Mutex<Release>>,
     downloads: Arc<std::sync::atomic::AtomicUsize>,
+    checks: Arc<std::sync::atomic::AtomicUsize>,
+    unavailable: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -38,6 +40,10 @@ impl Server {
             }],
         }));
         let downloads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let requests = checks.clone();
+        let unavailable = Arc::new(AtomicBool::new(false));
+        let failures = unavailable.clone();
         let stopped = Arc::new(AtomicBool::new(false));
         let (state, count, done) = (release.clone(), downloads.clone(), stopped.clone());
         let worker = thread::spawn(move || {
@@ -58,12 +64,20 @@ impl Server {
                     }
                     let request = String::from_utf8_lossy(&request);
                     let body = if request.starts_with("GET /manifest.json ") {
+                        requests.fetch_add(1, Ordering::Relaxed);
+                        if failures.load(Ordering::Relaxed) {
+                            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                            continue;
+                        }
                         assert!(request.to_lowercase().contains("cache-control: no-cache"));
                         serde_json::to_vec(&Manifest {
                             schema_version: 1,
                             release: Some(state.lock().unwrap().clone()),
                         })
                         .unwrap()
+                    } else if request.starts_with("GET /updates/launcher-v1.json ") {
+                        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        continue;
                     } else {
                         count.fetch_add(1, Ordering::Relaxed);
                         data.to_vec()
@@ -83,6 +97,8 @@ impl Server {
             source,
             release,
             downloads,
+            checks,
+            unavailable,
             stopped,
             worker: Some(worker),
         }
@@ -117,7 +133,7 @@ fn app(root: &Path, source: &str) -> Launcher {
         inspected_path: None,
         importing: false,
         hero: None,
-        next_check: Instant::now(),
+        pending_play: false,
         blocked_update: None,
         download_started: None,
         reports: crate::report_ui::Form::default(),
@@ -125,7 +141,6 @@ fn app(root: &Path, source: &str) -> Launcher {
         launcher_ready: None,
         launcher_handoff: None,
         launcher_status: String::new(),
-        next_launcher_check: Instant::now() + Duration::from_secs(3600),
     }
 }
 
@@ -133,7 +148,8 @@ fn settle(app: &mut Launcher, ctx: &egui::Context) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         app.tick(ctx);
-        if !app.busy() {
+        app.poll_launcher(ctx);
+        if !app.busy() && app.launcher_receiver.is_none() {
             break;
         }
         assert!(Instant::now() < deadline, "{}", app.status);
@@ -142,45 +158,105 @@ fn settle(app: &mut Launcher, ctx: &egui::Context) {
 }
 
 #[test]
-fn open_launcher_downloads_and_detects_a_later_publication_without_reopening() {
+fn startup_checks_once_and_idle_does_not_fetch_later_publications() {
     let server = Server::new();
     let root = tempfile::tempdir().unwrap();
     let ctx = egui::Context::default();
     let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
     settle(&mut app, &ctx);
     assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-1");
-    app.installed.as_ref().unwrap().verify(root.path()).unwrap();
-    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
-    app.next_check = Instant::now();
-    settle(&mut app, &ctx);
-    assert_eq!(
-        server.downloads.load(Ordering::Relaxed),
-        1,
-        "unchanged manifest must not redownload"
-    );
     server.release.lock().unwrap().version = "ui-test-2".into();
-    app.next_check = Instant::now();
-    settle(&mut app, &ctx);
-    assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-2");
-    assert_eq!(server.downloads.load(Ordering::Relaxed), 2);
+    for _ in 0..1000 {
+        app.tick(&ctx);
+        app.poll_launcher(&ctx);
+    }
+    assert_eq!(server.checks.load(Ordering::Relaxed), 1);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
+    assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-1");
+}
+
+fn ready_data(app: &mut Launcher) {
+    let root = app.root.join("fixture-data");
+    std::fs::create_dir_all(&root).unwrap();
+    app.config.data_path = root.to_string_lossy().into_owned();
+    app.inspected_path = Some(app.config.data_path.clone());
+    app.inventory = Some(Inventory {
+        root,
+        files: 1,
+        bytes: 1,
+        by_extension: BTreeMap::new(),
+        case_collisions: vec![],
+    });
 }
 
 #[test]
-fn disabled_autoload_and_pause_do_not_restart_downloads_on_the_next_check() {
+fn play_rechecks_and_installs_latest_before_attempting_to_execute_it() {
     let server = Server::new();
     let root = tempfile::tempdir().unwrap();
     let ctx = egui::Context::default();
     let mut app = app(root.path(), &server.source);
-    app.config.auto_update = false;
+    app.check(&ctx);
     settle(&mut app, &ctx);
-    assert!(app.available.is_some() && app.installed.is_none());
-    assert_eq!(server.downloads.load(Ordering::Relaxed), 0);
+    ready_data(&mut app);
+    server.release.lock().unwrap().version = "ui-test-2".into();
+    app.request_play(&ctx);
+    settle(&mut app, &ctx);
+    assert_eq!(server.checks.load(Ordering::Relaxed), 2);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 2);
+    assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-2");
+    assert!(!app.pending_play);
+    // The fixture is deliberately not executable code. Reaching this error proves
+    // launch was attempted only after the new verified release became active.
+    assert!(app.error.is_some() && app.child.is_none());
+}
+
+#[test]
+fn switching_channel_is_saved_without_a_network_check_or_install() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    let active = std::fs::read(root.path().join("active.json")).unwrap();
+    app.select_channel(UpdateChannel::Test);
+    assert_eq!(
+        Config::load(root.path()).unwrap().channel,
+        UpdateChannel::Test
+    );
+    assert_eq!(
+        Config::load(root.path()).unwrap().manifest_url,
+        opensc_launcher::TEST_MANIFEST
+    );
+    for _ in 0..100 {
+        app.tick(&ctx);
+    }
+    assert_eq!(server.checks.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        std::fs::read(root.path().join("active.json")).unwrap(),
+        active
+    );
+    assert!(app.available.is_none());
+    app.select_channel(UpdateChannel::Stable);
+    assert_eq!(
+        Config::load(root.path()).unwrap().channel,
+        UpdateChannel::Stable
+    );
+}
+
+#[test]
+fn explicit_retry_clears_a_cancelled_download_without_idle_restarts() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.available = updater::check(&server.source).unwrap();
     app.blocked_update = app.available.as_ref().unwrap().release.fingerprint().ok();
-    app.config.auto_update = true;
-    app.next_check = Instant::now();
     settle(&mut app, &ctx);
     assert_eq!(server.downloads.load(Ordering::Relaxed), 0);
-    app.blocked_update = None;
+    ready_data(&mut app);
+    app.request_play(&ctx);
     settle(&mut app, &ctx);
     assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
 }
@@ -191,6 +267,7 @@ fn failed_download_preserves_active_release_and_waits_for_explicit_retry() {
     let root = tempfile::tempdir().unwrap();
     let ctx = egui::Context::default();
     let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
     settle(&mut app, &ctx);
     let active = std::fs::read(root.path().join("active.json")).unwrap();
     {
@@ -198,7 +275,7 @@ fn failed_download_preserves_active_release_and_waits_for_explicit_retry() {
         release.version = "ui-test-bad".into();
         release.files[0].sha256 = "0".repeat(64);
     }
-    app.next_check = Instant::now();
+    app.check(&ctx);
     settle(&mut app, &ctx);
     assert!(app.error.is_some() && app.blocked_update.is_some());
     assert_eq!(
@@ -206,7 +283,7 @@ fn failed_download_preserves_active_release_and_waits_for_explicit_retry() {
         active
     );
     let count = server.downloads.load(Ordering::Relaxed);
-    app.next_check = Instant::now();
+    app.check(&ctx);
     settle(&mut app, &ctx);
     assert_eq!(server.downloads.load(Ordering::Relaxed), count);
 }
@@ -228,6 +305,7 @@ fn running_game_defers_installation_until_the_child_exits() {
         .spawn()
         .unwrap();
     app.child = Some(child);
+    app.check(&ctx);
     settle(&mut app, &ctx);
     assert!(app.available.is_some() && app.installed.is_none());
     assert_eq!(server.downloads.load(Ordering::Relaxed), 0);
@@ -265,7 +343,7 @@ fn configured_external_data_is_imported_and_preference_values_are_preserved() {
     let ctx = egui::Context::default();
     let mut app = app(&root, &server.source);
     app.config.data_path = source.to_string_lossy().into_owned();
-    app.config.auto_update_launcher = false;
+    app.config.channel = UpdateChannel::Test;
     settle(&mut app, &ctx);
     let inventory = app.inventory.as_ref().unwrap();
     assert!(opensc_launcher::importer::is_managed(
@@ -280,6 +358,77 @@ fn configured_external_data_is_imported_and_preference_values_are_preserved() {
     let saved = Config::load(&root).unwrap();
     assert_eq!(saved.data_path, app.config.data_path);
     assert_eq!(saved.manifest_url, server.source);
-    assert!(!saved.auto_update_launcher);
+    assert_eq!(saved.channel, UpdateChannel::Test);
     assert!(app.blocked_update.is_none());
+}
+
+#[test]
+fn a_failed_play_check_can_use_the_verified_cached_release_of_the_same_channel() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    ready_data(&mut app);
+    let active = std::fs::read(root.path().join("active.json")).unwrap();
+    server.unavailable.store(true, Ordering::Relaxed);
+    app.request_play(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error
+            .as_ref()
+            .unwrap()
+            .contains("Не удалось запустить движок"),
+        "{:?}",
+        app.error
+    );
+    assert_eq!(server.checks.load(Ordering::Relaxed), 2);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        std::fs::read(root.path().join("active.json")).unwrap(),
+        active
+    );
+}
+
+#[test]
+fn cached_offline_play_rejects_a_different_channel_until_its_payload_is_confirmed() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.cached_channel_matches());
+    app.select_channel(UpdateChannel::Test);
+    assert!(!app.cached_channel_matches());
+    let fingerprint = app
+        .installed
+        .as_ref()
+        .unwrap()
+        .release
+        .fingerprint()
+        .unwrap();
+    app.config
+        .confirmed_releases
+        .insert(app.config.manifest_url.clone(), fingerprint);
+    assert!(app.cached_channel_matches());
+    app.save();
+    assert_eq!(
+        Config::load(root.path()).unwrap().confirmed_releases,
+        app.config.confirmed_releases
+    );
+}
+
+#[test]
+fn repeated_play_clicks_while_a_launch_is_pending_do_not_start_extra_checks() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    ready_data(&mut app);
+    app.pending_play = true;
+    app.request_play(&ctx);
+    assert!(app.receiver.is_none() && app.launcher_receiver.is_none());
+    assert_eq!(server.checks.load(Ordering::Relaxed), 0);
 }

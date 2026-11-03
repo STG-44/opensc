@@ -5,25 +5,20 @@ use bevy::prelude::*;
 use std::{collections::BTreeMap, sync::OnceLock};
 
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Language {
-    #[default]
-    Russian,
-    English,
-}
+pub(crate) struct Language(pub opensc_localization::Locale);
+#[allow(non_upper_case_globals)]
 impl Language {
-    pub fn from_english(english: bool) -> Self {
-        if english {
-            Self::English
-        } else {
-            Self::Russian
-        }
-    }
+    pub const Russian: Self = Self(opensc_localization::Locale::Russian);
+    pub const English: Self = Self(opensc_localization::Locale::English);
     pub fn parse(value: &str) -> Result<Self, &'static str> {
-        match value {
-            "ru" => Ok(Self::from_english(false)),
-            "en" => Ok(Self::from_english(true)),
-            _ => Err("language must be ru or en"),
-        }
+        opensc_localization::Locale::parse(value).map(Self)
+    }
+}
+fn translated(language: Language, source: &str) -> String {
+    if language == Language::English {
+        language.0.translate(&english(source))
+    } else {
+        language.0.translate(source)
     }
 }
 
@@ -33,7 +28,13 @@ impl Plugin for LocalizationPlugin {
         // Проверяем встроенный словарь до первого игрового кадра.
         catalog();
         app.init_resource::<Language>()
-            .add_systems(PostUpdate, localize.before(bevy::ui::UiSystems::Prepare));
+            .add_systems(Startup, setup_fonts)
+            .add_systems(
+                PostUpdate,
+                (localize, apply_fonts)
+                    .chain()
+                    .before(bevy::ui::UiSystems::Prepare),
+            );
     }
 }
 
@@ -146,11 +147,7 @@ fn localize(
                 if *language == Language::English && failure(&cache.source).is_some() {
                     warn!("{}", cache.source);
                 }
-                cache.rendered = if *language == Language::English {
-                    english(&cache.source)
-                } else {
-                    cache.source.clone()
-                };
+                cache.rendered = translated(*language, &cache.source);
                 cache.language = *language;
             }
             // Существующие UI-системы могут записывать ту же исходную фразу
@@ -163,11 +160,7 @@ fn localize(
             if *language == Language::English && failure(&source).is_some() {
                 warn!("{source}");
             }
-            let rendered = if *language == Language::English {
-                english(&source)
-            } else {
-                source.clone()
-            };
+            let rendered = translated(*language, &source);
             if text.0 != rendered {
                 text.0.clone_from(&rendered);
             }
@@ -176,6 +169,51 @@ fn localize(
                 rendered,
                 language: *language,
             });
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct LocalizedFonts(Vec<(opensc_localization::Locale, Handle<Font>)>);
+#[derive(Component)]
+struct OriginalFont(bevy::text::FontSource);
+fn setup_fonts(mut commands: Commands, fonts: Option<ResMut<Assets<Font>>>) {
+    let Some(mut fonts) = fonts else {
+        commands.insert_resource(LocalizedFonts::default());
+        return;
+    };
+    let mut loaded = Vec::new();
+    for locale in opensc_localization::Locale::ALL {
+        if let Some(bytes) = locale.cjk_font() {
+            loaded.push((locale, fonts.add(Font::from_bytes(bytes.to_vec()))));
+        }
+    }
+    commands.insert_resource(LocalizedFonts(loaded));
+}
+fn apply_fonts(
+    mut commands: Commands,
+    language: Res<Language>,
+    fonts: Res<LocalizedFonts>,
+    mut texts: Query<(Entity, &mut TextFont, Option<&OriginalFont>), With<Text>>,
+) {
+    let selected = fonts
+        .0
+        .iter()
+        .find(|(locale, _)| *locale == language.0)
+        .map(|(_, font)| font.clone());
+    for (entity, mut text, original) in &mut texts {
+        let source = original
+            .map(|f| f.0.clone())
+            .unwrap_or_else(|| text.font.clone());
+        let desired = selected
+            .clone()
+            .map(bevy::text::FontSource::from)
+            .unwrap_or_else(|| source.clone());
+        if text.font != desired {
+            text.font = desired;
+        }
+        if original.is_none() {
+            commands.entity(entity).insert(OriginalFont(source));
         }
     }
 }

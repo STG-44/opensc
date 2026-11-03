@@ -148,6 +148,8 @@ impl Installed {
             )
             .arg("--game-dir")
             .arg(data_path.canonicalize()?)
+            .arg("--language")
+            .arg(config.language.code())
             .arg("--settings")
             .arg(game_settings)
             .arg("--overrides")

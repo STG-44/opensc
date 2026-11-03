@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/shadow-formats", "crates/shadow-tools", "crates/shadow-viewer", "crates/shadow-model-viewer"]
+members = ["crates/opensc-localization", "crates/shadow-formats", "crates/shadow-tools", "crates/shadow-viewer", "crates/shadow-model-viewer"]
 resolver = "3"
 
 [workspace.package]

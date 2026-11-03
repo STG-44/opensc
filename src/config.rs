@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use opensc_localization::Locale;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -6,14 +7,39 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Test,
+}
+
+impl UpdateChannel {
+    pub fn manifest(self) -> &'static str {
+        match self {
+            Self::Stable => crate::DEFAULT_MANIFEST,
+            Self::Test => crate::TEST_MANIFEST,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Stable => "Стабильный",
+            Self::Test => "Тестовый",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub manifest_url: String,
     pub data_path: String,
     pub overrides_path: String,
-    pub auto_update: bool,
-    pub auto_update_launcher: bool,
+    pub channel: UpdateChannel,
+    pub language: Locale,
+    pub confirmed_releases: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -22,8 +48,9 @@ impl Default for Config {
             manifest_url: crate::DEFAULT_MANIFEST.into(),
             data_path: String::new(),
             overrides_path: String::new(),
-            auto_update: true,
-            auto_update_launcher: true,
+            channel: UpdateChannel::Stable,
+            language: Locale::Russian,
+            confirmed_releases: Default::default(),
         }
     }
 }
@@ -53,11 +80,37 @@ pub fn default_root() -> PathBuf {
 impl Config {
     pub fn load(root: &Path) -> Result<Self> {
         let path = root.join("config.json");
-        if !path.exists() {
-            return Ok(Self::default());
+        let value: serde_json::Value = if path.exists() {
+            serde_json::from_slice(&fs::read(&path)?)?
+        } else {
+            serde_json::json!({})
+        };
+        let mut config: Self = serde_json::from_value(value.clone())
+            .with_context(|| format!("Не удалось прочитать {}", path.display()))?;
+        if value.get("language").is_none()
+            && let Ok(bytes) = fs::read(root.join("game/settings.json"))
+            && let Ok(settings) = serde_json::from_slice::<serde_json::Value>(&bytes)
+            && let Some(code) = settings["language"].as_str()
+            && let Ok(language) = Locale::parse(code)
+        {
+            config.language = language;
         }
-        serde_json::from_slice(&fs::read(&path)?)
-            .with_context(|| format!("Не удалось прочитать {}", path.display()))
+        // Migrate the old public channel, but retain explicitly configured local/custom servers.
+        if [
+            crate::LEGACY_MANIFEST,
+            crate::DEFAULT_MANIFEST,
+            crate::TEST_MANIFEST,
+        ]
+        .contains(&config.manifest_url.as_str())
+        {
+            config.manifest_url = config.channel.manifest().into();
+        }
+        Ok(config)
+    }
+
+    pub fn set_channel(&mut self, channel: UpdateChannel) {
+        self.channel = channel;
+        self.manifest_url = channel.manifest().into();
     }
 
     pub fn save(&self, root: &Path) -> Result<()> {
@@ -73,4 +126,68 @@ pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     file.as_file().sync_all()?;
     file.persist(path).map_err(|e| e.error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_game_language_is_adopted_even_without_a_launcher_config() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("game")).unwrap();
+        fs::write(
+            root.path().join("game/settings.json"),
+            r#"{"version":1,"language":"en"}"#,
+        )
+        .unwrap();
+        let config = Config::load(root.path()).unwrap();
+        assert_eq!(config.language, Locale::English);
+        assert_eq!(config.channel, UpdateChannel::Stable);
+    }
+    #[test]
+    fn old_public_profile_migrates_to_stable_and_retains_resources() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("config.json"), serde_json::json!({
+            "manifest_url": crate::LEGACY_MANIFEST, "data_path": "original", "overrides_path": "mods",
+            "auto_update": false, "auto_update_launcher": false
+        }).to_string()).unwrap();
+        let config = Config::load(root.path()).unwrap();
+        assert_eq!(config.channel, UpdateChannel::Stable);
+        assert_eq!(config.manifest_url, crate::DEFAULT_MANIFEST);
+        assert_eq!(config.data_path, "original");
+        assert_eq!(config.overrides_path, "mods");
+    }
+
+    #[test]
+    fn channel_survives_reopening_until_explicitly_changed() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::load(root.path()).unwrap();
+        assert_eq!(config.channel, UpdateChannel::Stable);
+        config.set_channel(UpdateChannel::Test);
+        config.save(root.path()).unwrap();
+        let mut config = Config::load(root.path()).unwrap();
+        assert_eq!(config.channel, UpdateChannel::Test);
+        assert_eq!(config.manifest_url, crate::TEST_MANIFEST);
+        config.set_channel(UpdateChannel::Stable);
+        config.save(root.path()).unwrap();
+        assert_eq!(
+            Config::load(root.path()).unwrap().manifest_url,
+            crate::DEFAULT_MANIFEST
+        );
+    }
+
+    #[test]
+    fn explicit_custom_server_is_preserved_when_loading_legacy_config() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("config.json"),
+            r#"{"manifest_url":"http://127.0.0.1:45123/custom.json"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            Config::load(root.path()).unwrap().manifest_url,
+            "http://127.0.0.1:45123/custom.json"
+        );
+    }
 }

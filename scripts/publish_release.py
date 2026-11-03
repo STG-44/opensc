@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a static update directory; publish manifest-v1.json last on the server."""
+"""Build an unpublished engine candidate for explicit channel promotion."""
 import argparse
 import hashlib
 import json
@@ -116,7 +116,8 @@ def build(args):
     (output / "manifest-v1.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Prepared {len(files)} files in {output}")
     print("Copy the releases/ directory into the existing /updates/ document root first.")
-    print("Replace /updates/manifest-v1.json atomically after all files have arrived.")
+    print("Promote the candidate with publish_engine_channel.py after verifying the uploads.")
+    print("Select test for new features; stable also updates the legacy client alias.")
 
 
 if __name__ == "__main__":

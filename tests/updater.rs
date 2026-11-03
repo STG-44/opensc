@@ -411,7 +411,7 @@ fn launches_with_data_path_as_one_argument() {
     assert_eq!(
         arguments,
         format!(
-            "--game-dir\n{}\n--settings\n{}\n--overrides\n{}\n",
+            "--game-dir\n{}\n--language\nru\n--settings\n{}\n--overrides\n{}\n",
             data.canonicalize().unwrap().display(),
             root.path()
                 .canonicalize()
@@ -438,7 +438,10 @@ fn old_launcher_configuration_keeps_defaults_for_game_integration() {
     let config = opensc_launcher::config::Config::load(root.path()).unwrap();
     assert_eq!(config.data_path, "existing/Data");
     assert!(config.overrides_path.is_empty());
-    assert!(config.auto_update);
+    assert_eq!(
+        config.channel,
+        opensc_launcher::config::UpdateChannel::Stable
+    );
 }
 
 #[cfg(unix)]
@@ -479,7 +482,7 @@ fn updating_engine_preserves_settings_and_passes_unicode_overrides_without_shell
     assert_eq!(
         arguments,
         format!(
-            "--game-dir\n{}\n--settings\n{}\n--overrides\n{}\n",
+            "--game-dir\n{}\n--language\nru\n--settings\n{}\n--overrides\n{}\n",
             data.canonicalize().unwrap().display(),
             root.path()
                 .canonicalize()
@@ -503,4 +506,46 @@ fn updating_engine_preserves_settings_and_passes_unicode_overrides_without_shell
             .overrides_path,
         config.overrides_path
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_saved_launcher_language_is_passed_to_every_game_launch() {
+    let script = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > launch-args.txt\n";
+    let server = Server::new(script.to_vec(), 200);
+    let available = Available {
+        source: server.url.clone(),
+        release: release(script),
+    };
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("Original game with spaces");
+    fs::create_dir(&data).unwrap();
+    let installed =
+        updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    for language in opensc_localization::Locale::ALL {
+        let config = opensc_launcher::config::Config {
+            language,
+            ..Default::default()
+        };
+        config.save(root.path()).unwrap();
+        assert!(
+            installed
+                .launch(root.path(), &data)
+                .unwrap()
+                .wait()
+                .unwrap()
+                .success()
+        );
+        let arguments = fs::read_to_string(
+            installed
+                .directory(root.path())
+                .unwrap()
+                .join("launch-args.txt"),
+        )
+        .unwrap();
+        let arguments = arguments.lines().collect::<Vec<_>>();
+        assert_eq!(arguments[2], "--language");
+        assert_eq!(arguments[3], language.code());
+        assert_eq!(arguments[1], data.canonicalize().unwrap().to_str().unwrap());
+    }
 }

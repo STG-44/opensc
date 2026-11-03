@@ -212,11 +212,15 @@ def source_hashes():
     paths += list((PROJECT / 'crates/report-protocol/src').rglob('*.rs'))
     paths += [PROJECT/'engine/Cargo.toml',PROJECT/'engine/crates/shadow-formats/Cargo.toml',PROJECT/'third-party/unshield-LICENSE.txt']
     paths += list((PROJECT/'engine/crates/shadow-formats/src').rglob('*.rs'))
+    paths += [p for p in (PROJECT/'engine/crates/opensc-localization').rglob('*') if p.is_file() and p.suffix in ('.rs','.json','.ttf','.toml','.gz')]
+    paths += [PROJECT/'engine/crates/shadow-viewer/assets/fonts/DejaVuSans.ttf']
     return {p.relative_to(PROJECT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
 
 
 def notices(metadata, destination):
     text = ['OpenSC Launcher: project and third-party notices\n', '\nOpenSC project source — MIT License\n', (PROJECT/'LICENSE').read_text(encoding='utf-8'), '\nInstallShield format reference: twogood/unshield\n', (PROJECT/'third-party/unshield-LICENSE.txt').read_text(encoding='utf-8')]
+    text += ['\nBundled modified Noto Sans regional UI fonts — SIL Open Font License 1.1\n', (PROJECT/'engine/crates/opensc-localization/assets/fonts/OFL.txt').read_text(encoding='utf-8')]
+    text += ['\nDejaVu Sans font\n', (PROJECT/'engine/crates/shadow-viewer/assets/fonts/LICENSE-DejaVu.txt').read_text(encoding='utf-8')]
     for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
         if package['source'] is None:
             continue

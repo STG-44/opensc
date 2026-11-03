@@ -1,11 +1,12 @@
 //! Наши настройки хранятся отдельно от установленного оригинала.
+use opensc_localization::Locale;
 use std::{
     error::Error,
     path::{Path, PathBuf},
 };
 #[derive(bevy::prelude::Resource, Debug, Clone, PartialEq)]
 pub struct Preferences {
-    pub english: bool,
+    pub language: Locale,
     pub fullscreen: bool,
     pub window_size: [u32; 2],
     pub text_scale: f32,
@@ -17,7 +18,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            english: false,
+            language: Locale::Russian,
             fullscreen: false,
             window_size: [1280, 720],
             text_scale: 1.0,
@@ -34,11 +35,7 @@ impl Preferences {
         if version != 1 {
             return Err("неподдерживаемая версия настроек".into());
         }
-        let english = match value["language"].as_str() {
-            Some("ru") => false,
-            Some("en") => true,
-            _ => return Err("неверный язык настроек".into()),
-        };
+        let language = Locale::parse(value["language"].as_str().ok_or("неверный язык настроек")?)?;
         let text_scale = value["text_scale"].as_f64().ok_or("нет размера текста")? as f32;
         if ![1.0, 1.25, 1.5].contains(&text_scale) {
             return Err("неверный размер текста".into());
@@ -70,7 +67,7 @@ impl Preferences {
                 Ok(n)
             };
         Ok(Self {
-            english,
+            language,
             text_scale,
             window_size,
             fullscreen: value["fullscreen"].as_bool().ok_or("нет режима окна")?,
@@ -86,7 +83,7 @@ impl Preferences {
         })
     }
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({"version":1,"language":if self.english {"en"} else {"ru"},"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background,"master_volume":self.master_volume,"camera_speed":self.camera_speed,"edge_scroll":self.edge_scroll})
+        serde_json::json!({"version":1,"language":self.language.code(),"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background,"master_volume":self.master_volume,"camera_speed":self.camera_speed,"edge_scroll":self.edge_scroll})
     }
     pub fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
         if !path.exists() {
@@ -147,9 +144,22 @@ pub fn default_path() -> Result<PathBuf, Box<dyn Error>> {
 mod tests {
     use super::*;
     #[test]
+    fn all_launcher_languages_roundtrip_in_game_settings() {
+        for language in Locale::ALL {
+            let preferences = Preferences {
+                language,
+                ..Default::default()
+            };
+            assert_eq!(
+                Preferences::from_json(&preferences.json()).unwrap(),
+                preferences
+            );
+        }
+    }
+    #[test]
     fn rejects_invalid_settings_and_roundtrips_supported_values() {
         let p = Preferences {
-            english: true,
+            language: Locale::English,
             fullscreen: true,
             window_size: [3440, 1440],
             text_scale: 1.5,
@@ -197,7 +207,7 @@ mod tests {
         assert_eq!(Preferences::load(&path).unwrap(), Preferences::default());
         Preferences::default().save(&path).unwrap();
         let p = Preferences {
-            english: true,
+            language: Locale::English,
             ..Default::default()
         };
         p.save(&path).unwrap();

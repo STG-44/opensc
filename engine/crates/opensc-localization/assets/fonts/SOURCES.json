@@ -1,0 +1,71 @@
+{
+  "fonttools_version": "4.68.0",
+  "upstream_commit": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+  "license_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE",
+  "fonts": [
+    {
+      "file": "OpenSC-UI-SC.ttf.gz",
+      "source": {
+        "file": "NotoSansSC-VF.ttf",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf",
+        "bytes": 17773132,
+        "sha256": "d68bafcb48a2707749396aa12bbbd833cb70401f3a9a689fd2902c7e0d295964"
+      },
+      "sha256": "4cdff5efeeb790736707e13230e4aad9f67712e05a3adc4271804e07533855a6",
+      "bytes": 6268137,
+      "uncompressed_sha256": "be5754c4f34e13c1421409f4a593f58d49f798209e63bc9ce39dd89ec1da4f7a",
+      "uncompressed_bytes": 10539260,
+      "family": "OpenSC UI SC",
+      "weight": 400,
+      "purpose": "Bundled UI glyph subset"
+    },
+    {
+      "file": "OpenSC-UI-TC.ttf.gz",
+      "source": {
+        "file": "NotoSansTC-VF.ttf",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/Subset/NotoSansTC-VF.ttf",
+        "bytes": 11942800,
+        "sha256": "ac091cc8cd19e848202afc8fe6d3809b4526c8fdbdb4be82da20c4f785949591"
+      },
+      "sha256": "7020424afa9985a072aae06297815e2fa57a899e0623f702bd996d12ea52a898",
+      "bytes": 4233937,
+      "uncompressed_sha256": "a24015c78409f9bcc2be8d2753391a23308afc93b93113e8fad3a72f80257746",
+      "uncompressed_bytes": 7087736,
+      "family": "OpenSC UI TC",
+      "weight": 400,
+      "purpose": "Bundled UI glyph subset"
+    },
+    {
+      "file": "OpenSC-UI-JP.ttf.gz",
+      "source": {
+        "file": "NotoSansJP-VF.ttf",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/Subset/NotoSansJP-VF.ttf",
+        "bytes": 9590732,
+        "sha256": "f4b373b226668ee33a6e54b02823dcd2d1209f17159f777421ae8c2275160369"
+      },
+      "sha256": "b83a3cff81b970c99e86cfe99682e52aa784e949d3848a2d8cfae5355f990057",
+      "bytes": 2998478,
+      "uncompressed_sha256": "9c3f4da579949104d45b11f6aae67a8a035b82d00bb45eef7ff3d2d6a9b5d353",
+      "uncompressed_bytes": 5244528,
+      "family": "OpenSC UI JP",
+      "weight": 400,
+      "purpose": "Bundled UI glyph subset"
+    },
+    {
+      "file": "OpenSC-UI-KR.ttf.gz",
+      "source": {
+        "file": "NotoSansKR-VF.ttf",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/Variable/TTF/Subset/NotoSansKR-VF.ttf",
+        "bytes": 10415420,
+        "sha256": "9e1d729e7e2b36f9ef439da102f8c134c10aabe46f1c843bf0aca5c043b86f76"
+      },
+      "sha256": "ccfb1c0571c1b20d9d13eb49782e05704861f5a77de2cf6177e88b92bb30b0a8",
+      "bytes": 2982036,
+      "uncompressed_sha256": "8d4ecdae132e76afca461f22f9e3caddc0b1000abee6450ee65799e871af127f",
+      "uncompressed_bytes": 6162932,
+      "family": "OpenSC UI KR",
+      "weight": 400,
+      "purpose": "Bundled UI glyph subset"
+    }
+  ]
+}

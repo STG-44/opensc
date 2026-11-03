@@ -21,17 +21,17 @@ building the active development branch.
    copied automatically into OpenSC's managed library.
 3. Let the launcher install the engine, then select **Play → Training**.
 
-Launcher **0.4.1** checks for engine updates automatically. Game data, settings
+Launcher **0.4.2** checks for updates when opened and before Play. Stable is the default; the selected Stable/Test channel and shared game language are saved automatically. Game data, settings
 and overrides stay separate from versioned engine installations. Launcher
 self-updates use a signed channel; older launchers may need one manual upgrade.
-[Import details — Russian](docs/IMPORTING-RU.md).
+[Import details — Russian](docs/IMPORTING-RU.md) · [Update channels](docs/UPDATE-CHANNELS.md) · [Languages](docs/LOCALIZATION.md).
 
 ## Current features
 
 | Area | Implementation |
 | --- | --- |
 | Original resources | GUT archives, SMF models, BMF animation, MTF placement, PCX terrain and textures |
-| Menus | Animated backgrounds and buttons, Unicode fonts, Russian/English UI, AVI playback with sound |
+| Menus | Animated backgrounds and buttons, Unicode fonts, 15 UI languages, AVI playback with sound |
 | Tactical controls | John and recruited Jack, selection, stances, group movement and obstacle detours |
 | Training | Weapons and items, medical kit, armor, body carrying, fences, gates, Hummer and evacuation |
 | Inventory | Original panel layout, equipment, backpack grid, ammunition indicators and skills |

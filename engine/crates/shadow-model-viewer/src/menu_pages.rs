@@ -715,7 +715,7 @@ fn campaign(
                     .collect::<Vec<_>>()
                     .join("\n");
                 if names.is_empty() {
-                    if context.saved.english {
+                    if context.saved.language == opensc_localization::Locale::English {
                         "No new mercenaries are specified for this mission."
                     } else {
                         "Дополнение состава для этой миссии не задано."
@@ -726,7 +726,7 @@ fn campaign(
                 }
             }
             _ => {
-                let title = if context.saved.english {
+                let title = if context.saved.language == opensc_localization::Locale::English {
                     "Mission shop catalogue (view only):"
                 } else {
                     "Ассортимент магазина миссии (просмотр):"
@@ -738,7 +738,7 @@ fn campaign(
                     .collect::<Vec<_>>()
                     .join("\n");
                 if items.is_empty() {
-                    if context.saved.english {
+                    if context.saved.language == opensc_localization::Locale::English {
                         "No new shop stock is specified for this mission."
                     } else {
                         "Дополнение магазина для этой миссии не задано."
@@ -753,7 +753,7 @@ fn campaign(
     })();
     let (heading, contents) = result.unwrap_or_else(|error| {
         warn!("Unable to read campaign data: {error}");
-        if context.saved.english {
+        if context.saved.language == opensc_localization::Locale::English {
             ("Resource error".into(), "Could not read campaign data. Check the original game files. See the log for details.".into())
         } else {
             ("Ошибка ресурсов".into(), error)

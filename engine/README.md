@@ -21,7 +21,7 @@ campaign is still in development.
 From the repository root with the pinned Rust toolchain installed:
 
 ```sh
-git switch codex/original-inventory
+git switch codex/launcher-channels
 cargo run --manifest-path engine/Cargo.toml --locked \
   -p shadow-model-viewer --bin shadow-game -- \
   --game-dir "/path/to/Shadow Company"
@@ -31,7 +31,7 @@ The same arguments accept Windows paths. Add `--overrides "/path/to/replacements
 to replace assets; preserve the internal directory structure. Use
 `--settings "/path/to/test-settings.json"` for isolated settings.
 
-The UI supports Russian/English (`--language ru|en`), HD and wide windows
+The UI supports 15-language (`--language ru|en`), HD and wide windows
 (`--window 1920x1080`). See `--help` for inspection and native-check modes.
 Linux needs the platform libraries installed by the [engine workflow](../.github/workflows/engine.yml).
 
@@ -103,3 +103,5 @@ does not darken the complete 3D terrain. See [tactical systems](docs/TACTICAL-SY
 
 Project-owned engine source uses the [MIT License](LICENSE); dependency, font
 and original-game asset terms remain separate.
+
+The launcher selects and passes the interface language. See [shared language details](../docs/LOCALIZATION.md), including translation review and bundled font scope.

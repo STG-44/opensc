@@ -1,3 +1,4 @@
+use crate::ui::tr;
 use eframe::egui::{self, RichText};
 use opensc_launcher::{config::Config, reports, updater::Installed};
 use opensc_report_protocol::{Diagnostics, Receipt, Report};
@@ -61,9 +62,9 @@ impl Form {
         if self.pending.is_none() {
             self.captured = Some(reports::diagnostics(root, config, installed, true));
             self.category = 2;
-            self.title = "Игра неожиданно завершилась".into();
+            self.title = tr("Игра неожиданно завершилась");
             self.actual =
-                "Игра закрылась с кодом ошибки. Последний фрагмент журнала приложен ниже.".into();
+                tr("Игра закрылась с кодом ошибки. Последний фрагмент журнала приложен ниже.");
         }
     }
 
@@ -92,46 +93,46 @@ impl Form {
             self.captured = Some(reports::diagnostics(root, config, installed, true));
         }
         let mut open = true;
-        egui::Window::new("Сообщить об ошибке").open(&mut open).default_width(710.0)
+        egui::Window::new(tr("Сообщить об ошибке")).open(&mut open).default_width(710.0)
             .vscroll(true).show(ctx, |ui| {
                 if let Some(receipt) = &self.receipt {
-                    ui.heading(format!("Обращение {} принято", receipt.ticket_id));
-                    ui.label("Сохрани этот номер. Мы сможем найти обращение, сопоставить повторы и отметить исправление.");
-                    if ui.button("Новое обращение").clicked() {
+                    ui.heading(tr(&format!("Обращение {} принято", receipt.ticket_id)));
+                    ui.label(tr("Сохрани этот номер. Мы сможем найти обращение, сопоставить повторы и отметить исправление."));
+                    if ui.button(tr("Новое обращение")).clicked() {
                         *self = Self { open: true, include_log: true, ..Self::default() };
                     }
                     return;
                 }
-                ui.label("Опиши, что произошло и как это повторить. Ниже можно проверить всю отправляемую диагностику.");
+                ui.label(tr("Опиши, что произошло и как это повторить. Ниже можно проверить всю отправляемую диагностику."));
                 let editable = self.pending.is_none() && self.receiver.is_none();
                 ui.add_enabled_ui(editable, |ui| {
-                    egui::ComboBox::from_label("Категория").selected_text(CATEGORIES[self.category].1).show_ui(ui, |ui| {
-                        for (index,(_,label)) in CATEGORIES.iter().enumerate() { ui.selectable_value(&mut self.category,index,*label); }
+                    egui::ComboBox::from_label(tr("Категория")).selected_text(tr(CATEGORIES[self.category].1)).show_ui(ui, |ui| {
+                        for (index,(_,label)) in CATEGORIES.iter().enumerate() { ui.selectable_value(&mut self.category,index,tr(label)); }
                     });
-                    ui.label("Краткий заголовок");
+                    ui.label(tr("Краткий заголовок"));
                     ui.add(egui::TextEdit::singleline(&mut self.title).desired_width(f32::INFINITY).char_limit(80));
-                    ui.label("Шаги воспроизведения");
-                    ui.add(egui::TextEdit::multiline(&mut self.steps).desired_width(f32::INFINITY).desired_rows(4).hint_text("1. Запустил обучение\n2. Открыл инвентарь\n3. Нажал…").char_limit(2000));
-                    ui.label("Ожидаемый результат");
+                    ui.label(tr("Шаги воспроизведения"));
+                    ui.add(egui::TextEdit::multiline(&mut self.steps).desired_width(f32::INFINITY).desired_rows(4).hint_text(tr("1. Запустил обучение\n2. Открыл инвентарь\n3. Нажал…")).char_limit(2000));
+                    ui.label(tr("Ожидаемый результат"));
                     ui.add(egui::TextEdit::multiline(&mut self.expected).desired_width(f32::INFINITY).desired_rows(2).char_limit(2000));
-                    ui.label("Что получилось");
+                    ui.label(tr("Что получилось"));
                     ui.add(egui::TextEdit::multiline(&mut self.actual).desired_width(f32::INFINITY).desired_rows(2).char_limit(2000));
-                    ui.checkbox(&mut self.include_log,"Приложить последний фрагмент журнала игры (до 24 КБ)");
+                    ui.checkbox(&mut self.include_log,tr("Приложить последний фрагмент журнала игры (до 24 КБ)"));
                 });
                 let report = self.pending.clone().unwrap_or_else(|| Report {
                     schema_version: 1, request_id: reports::request_id(), category: CATEGORIES[self.category].0.into(),
                     title: self.title.trim().into(), steps: self.steps.trim().into(), expected: self.expected.trim().into(), actual: self.actual.trim().into(),
                     diagnostics: { let mut data = self.captured.clone().unwrap(); if !self.include_log { data.log_excerpt.clear(); } data },
                 });
-                egui::CollapsingHeader::new("Посмотреть всю отправляемую диагностику").show(ui, |ui| {
+                egui::CollapsingHeader::new(tr("Посмотреть всю отправляемую диагностику")).show(ui, |ui| {
                     let mut text = serde_json::to_string_pretty(&report.diagnostics).unwrap_or_default();
                     ui.add(egui::TextEdit::multiline(&mut text).interactive(false).desired_width(f32::INFINITY).desired_rows(9));
                 });
-                if self.pending.is_some() { ui.label("Обращение сохранено локально. Повторная отправка использует тот же номер запроса и не создаёт лишнюю копию."); }
-                if let Some(error) = &self.error { ui.colored_label(egui::Color32::LIGHT_RED,error); }
-                if report.validate().is_err() { ui.label(RichText::new("Заполни краткий заголовок и шаги воспроизведения. Если текст слишком длинный, сократи его.").small()); }
+                if self.pending.is_some() { ui.label(tr("Обращение сохранено локально. Повторная отправка использует тот же номер запроса и не создаёт лишнюю копию.")); }
+                if let Some(error) = &self.error { ui.colored_label(egui::Color32::LIGHT_RED,tr(error)); }
+                if report.validate().is_err() { ui.label(RichText::new(tr("Заполни краткий заголовок и шаги воспроизведения. Если текст слишком длинный, сократи его.")).small()); }
                 let can_send = self.receiver.is_none() && report.validate().is_ok();
-                if ui.add_enabled(can_send,egui::Button::new(if self.pending.is_some() { "Повторить отправку" } else { "Отправить обращение" })).clicked() {
+                if ui.add_enabled(can_send,egui::Button::new(tr(if self.pending.is_some() { "Повторить отправку" } else { "Отправить обращение" }))).clicked() {
                     match reports::save_outbox(root,&report) {
                         Ok(()) => {
                             self.pending = Some(report.clone()); self.error = None;
@@ -142,7 +143,7 @@ impl Form {
                         Err(error) => self.error = Some(format!("Не удалось сохранить обращение: {error:#}")),
                     }
                 }
-                if self.receiver.is_some() { ui.horizontal(|ui| { ui.spinner(); ui.label("Отправка обращения…"); }); }
+                if self.receiver.is_some() { ui.horizontal(|ui| { ui.spinner(); ui.label(tr("Отправка обращения…")); }); }
             });
         self.open = open;
     }

@@ -1,11 +1,12 @@
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use opensc_launcher::{
-    config::Config,
+    config::{Config, UpdateChannel},
     importer,
     resources::{self, Inventory},
     self_update,
     updater::{self, Available, Installed, Progress},
 };
+use opensc_localization::Locale;
 use std::{
     path::{Path, PathBuf},
     process::Child,
@@ -17,9 +18,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+thread_local! { static UI_LANGUAGE: std::cell::Cell<Locale> = const { std::cell::Cell::new(Locale::Russian) }; }
+pub(crate) fn tr(text: &str) -> String {
+    UI_LANGUAGE.with(|locale| locale.get().translate(text))
+}
+
 const ACCENT: Color32 = Color32::from_rgb(224, 167, 83);
 const PLAY: Color32 = Color32::from_rgb(190, 65, 31);
-const CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const MUTED: Color32 = Color32::from_rgb(161, 173, 163);
 const PANEL: Color32 = Color32::from_rgb(24, 31, 26);
 const BACKGROUND: Color32 = Color32::from_rgb(13, 18, 15);
@@ -51,7 +56,7 @@ pub struct Launcher {
     inspected_path: Option<String>,
     importing: bool,
     hero: Option<egui::TextureHandle>,
-    next_check: Instant,
+    pending_play: bool,
     blocked_update: Option<String>,
     download_started: Option<Instant>,
     reports: crate::report_ui::Form,
@@ -59,7 +64,6 @@ pub struct Launcher {
     launcher_ready: Option<self_update::Prepared>,
     launcher_handoff: Option<self_update::Handoff>,
     launcher_status: String,
-    next_launcher_check: Instant,
 }
 
 impl Launcher {
@@ -96,6 +100,7 @@ impl Launcher {
         let loaded = Config::load(&root);
         let error = loaded.as_ref().err().map(|e| format!("{e:#}"));
         let mut config = loaded.unwrap_or_default();
+        install_fonts(&cc.egui_ctx, config.language);
         if let Some(path) = data {
             config.data_path = path;
         }
@@ -119,7 +124,7 @@ impl Launcher {
             inspected_path: None,
             importing: false,
             hero,
-            next_check: Instant::now() + CHECK_INTERVAL,
+            pending_play: false,
             blocked_update: None,
             download_started: None,
             reports,
@@ -127,7 +132,6 @@ impl Launcher {
             launcher_ready: None,
             launcher_handoff: None,
             launcher_status: String::new(),
-            next_launcher_check: Instant::now(),
         };
         launcher.check(&cc.egui_ctx);
         launcher.check_launcher(&cc.egui_ctx);
@@ -142,12 +146,10 @@ impl Launcher {
     fn check_launcher(&mut self, ctx: &egui::Context) {
         if self.launcher_receiver.is_some()
             || self.launcher_handoff.is_some()
-            || self.busy()
-            || !self.config.auto_update_launcher
+            || self.child.is_some()
         {
             return;
         }
-        self.next_launcher_check = Instant::now() + Duration::from_secs(3600);
         self.launcher_status = "Проверка обновления лаунчера…".into();
         let (tx, rx) = mpsc::channel();
         self.launcher_receiver = Some(rx);
@@ -186,6 +188,7 @@ impl Launcher {
                 }
             }
         }
+        self.advance_play();
         if let Some(handoff) = &mut self.launcher_handoff {
             match handoff.poll() {
                 Ok(true) => {
@@ -199,8 +202,7 @@ impl Launcher {
                     self.launcher_status = format!("{error:#}");
                 }
             }
-        } else if self.config.auto_update_launcher
-            && !self.busy()
+        } else if !self.busy()
             && self.child.is_none()
             && !self.settings
             && self.reports.can_restart()
@@ -214,9 +216,6 @@ impl Launcher {
                 }
                 Err(error) => self.launcher_status = format!("{error:#}"),
             }
-        }
-        if self.config.auto_update_launcher && Instant::now() >= self.next_launcher_check {
-            self.check_launcher(ctx);
         }
     }
 
@@ -234,7 +233,6 @@ impl Launcher {
         if self.busy() {
             return;
         }
-        self.next_check = Instant::now() + CHECK_INTERVAL;
         self.available = None;
         self.error = None;
         self.status = "Проверка обновлений…".into();
@@ -387,13 +385,30 @@ impl Launcher {
                     } else {
                         "Установлена последняя версия. Можно играть".into()
                     };
+                    if !updater::supported(&available) {
+                        self.pending_play = false;
+                    }
+                    if updater::supported(&available)
+                        && let Ok(fingerprint) = available.release.fingerprint()
+                        && self
+                            .config
+                            .confirmed_releases
+                            .get(&self.config.manifest_url)
+                            != Some(&fingerprint)
+                    {
+                        self.config
+                            .confirmed_releases
+                            .insert(self.config.manifest_url.clone(), fingerprint);
+                        self.save();
+                    }
                     self.available = Some(available);
                 }
                 Event::Checked(Ok(None)) => {
-                    self.status = "Сервер доступен. Движок ещё не опубликован".into()
+                    self.pending_play = false;
+                    self.status = "В выбранном канале пока нет сборки".into()
                 }
                 Event::Inspected(Ok(inventory)) => {
-                    self.status = format!("В папке ресурсов {} файлов", inventory.files);
+                    self.status = "Файлы оригинала готовы".into();
                     self.inventory = Some(inventory);
                 }
                 Event::Imported(result) => {
@@ -423,13 +438,29 @@ impl Launcher {
                     self.installed = Some(installed);
                 }
                 Event::Verified(Ok(())) => self.status = "Все файлы прошли проверку SHA-256".into(),
-                Event::Checked(Err(error))
-                | Event::Inspected(Err(error))
-                | Event::Verified(Err(error)) => {
-                    self.status = "Не удалось завершить операцию".into();
+                Event::Checked(Err(error)) => {
+                    if self.pending_play && self.cached_channel_matches() {
+                        let installed = self.installed.as_ref().unwrap();
+                        self.available = Some(Available {
+                            source: installed.source.clone(),
+                            release: installed.release.clone(),
+                        });
+                        self.status = "Можно играть офлайн".into();
+                        self.activity.push(error);
+                        self.error = None;
+                    } else {
+                        self.pending_play = false;
+                        self.status = "Не удалось завершить операцию. Попробуйте ещё раз".into();
+                        self.error = Some(error);
+                    }
+                }
+                Event::Inspected(Err(error)) | Event::Verified(Err(error)) => {
+                    self.pending_play = false;
+                    self.status = "Не удалось завершить операцию. Попробуйте ещё раз".into();
                     self.error = Some(error);
                 }
                 Event::Installed(Err(error)) => {
+                    self.pending_play = false;
                     self.blocked_update = self
                         .available
                         .as_ref()
@@ -457,6 +488,12 @@ impl Launcher {
                         self.reports
                             .crash(&self.root, &self.config, self.installed.as_ref());
                     }
+                    self.status = if status.success() {
+                        "Файлы оригинала готовы"
+                    } else {
+                        "Игра неожиданно завершилась"
+                    }
+                    .into();
                     self.child = None;
                 }
                 Err(e) => {
@@ -486,7 +523,6 @@ impl Launcher {
     fn auto_install(&mut self, ctx: &egui::Context) {
         if !self.busy()
             && self.child.is_none()
-            && self.config.auto_update
             && self.available.as_ref().is_some_and(|available| {
                 self.needs_update(available)
                     && self.blocked_update != available.release.fingerprint().ok()
@@ -498,76 +534,115 @@ impl Launcher {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.receive(ctx);
-        if !self.busy() && Instant::now() >= self.next_check {
-            self.check(ctx);
-        }
+        self.advance_play();
     }
 
     fn resource_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        card(ui, |ui| {
-            eyebrow(ui, "02 / РЕСУРСЫ ИГРЫ");
-            ui.label(RichText::new("Игровые файлы Shadow Company").size(19.0));
-            ui.label(RichText::new("Выбери установленную игру, папку оригинального диска или образ MDF/MDS. Данные автоматически копируются в каталог OpenSC; исходные файлы сохраняются.").color(MUTED));
-            ui.add_enabled_ui(!self.busy() && self.child.is_none(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Выбрать папку игры / диска").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .set_title("Исходные файлы Shadow Company")
-                            .pick_folder()
-                    {
-                        self.import_data(path, ctx);
-                    }
-                    if ui.button("Выбрать образ MDF/MDS или ISO").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .set_title("Оригинальный образ Shadow Company")
-                            .add_filter("Образ игры", &["mds", "mdf", "iso", "MDS", "MDF", "ISO"])
-                            .pick_file()
-                    {
-                        self.import_data(path, ctx);
-                    }
-                });
+        ui.heading(tr("Файлы оригинальной игры"));
+        ui.label(tr("Выберите установленную игру или образ MDF/MDS либо ISO. Лаунчер скопирует файлы в свою библиотеку."));
+        ui.add_enabled_ui(!self.busy() && self.child.is_none(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(tr("Выбрать папку")).clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .set_title(tr("Оригинальная игра или диск"))
+                        .pick_folder()
+                {
+                    self.import_data(path, ctx);
+                }
+                if ui.button(tr("Выбрать образ диска")).clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .set_title(tr("Оригинальный образ Shadow Company"))
+                        .add_filter(
+                            tr("Образ игры"),
+                            &["mds", "mdf", "iso", "MDS", "MDF", "ISO"],
+                        )
+                        .pick_file()
+                {
+                    self.import_data(path, ctx);
+                }
             });
-            if !self.config.data_path.is_empty() {
-                ui.label(
-                    RichText::new(format!("Папка игровых данных: {}", self.config.data_path))
-                        .small()
-                        .color(MUTED),
-                );
-            }
-            if let Some(inventory) = &self.inventory {
-                ui.label(
-                    RichText::new(format!(
-                        "{} файлов  ·  {}  ·  папка доступна",
-                        inventory.files,
-                        bytes(inventory.bytes)
-                    ))
-                    .color(ACCENT),
-                );
-                if !inventory.case_collisions.is_empty() {
-                    ui.colored_label(
-                        Color32::LIGHT_RED,
-                        format!(
-                            "Совпадений имён без учёта регистра: {}",
-                            inventory.case_collisions.len()
-                        ),
-                    );
-                }
-                ui.label(
-                    RichText::new("Меню и обучение загружаются из выбранной установки оригинала.")
-                        .small()
-                        .color(MUTED),
-                );
-            } else if !self.config.data_path.is_empty() && !self.busy() {
-                if ui.small_button("Проверить папку").clicked() {
-                    self.inspect(ctx);
-                }
-            } else if let Some(path) = self.bundled_data() {
-                ui.label(
-                    RichText::new(format!("Ресурсы установлены с сервера: {}", path.display()))
-                        .color(ACCENT),
-                );
-            }
         });
+        if self.inventory.is_some() || self.bundled_data().is_some() {
+            ui.colored_label(ACCENT, tr("Файлы оригинала готовы"));
+        } else if !self.config.data_path.is_empty() {
+            ui.label(
+                RichText::new(tr("Файлы оригинала проверяются при открытии лаунчера."))
+                    .small()
+                    .color(MUTED),
+            );
+        }
+    }
+
+    fn select_channel(&mut self, channel: UpdateChannel) {
+        if self.config.channel == channel || self.busy() || self.child.is_some() {
+            return;
+        }
+        self.config.set_channel(channel);
+        self.available = None;
+        self.blocked_update = None;
+        self.pending_play = false;
+        self.error = None;
+        self.status = format!(
+            "Канал: {}. Обновление проверится перед запуском игры",
+            channel.label()
+        );
+        self.save();
+    }
+
+    fn cached_channel_matches(&self) -> bool {
+        let Some(installed) = &self.installed else {
+            return false;
+        };
+        let source = installed.source.as_str();
+        source == self.config.manifest_url
+            || (self.config.channel == UpdateChannel::Stable
+                && self.config.manifest_url == opensc_launcher::DEFAULT_MANIFEST
+                && source == opensc_launcher::LEGACY_MANIFEST)
+            || installed
+                .release
+                .fingerprint()
+                .ok()
+                .is_some_and(|fingerprint| {
+                    self.config
+                        .confirmed_releases
+                        .get(&self.config.manifest_url)
+                        == Some(&fingerprint)
+                })
+    }
+
+    fn request_play(&mut self, ctx: &egui::Context) {
+        if self.busy()
+            || self.pending_play
+            || self.child.is_some()
+            || self.launcher_handoff.is_some()
+        {
+            return;
+        }
+        if self.data_path().is_none() {
+            self.settings = true;
+            return;
+        }
+        self.pending_play = true;
+        self.blocked_update = None;
+        self.check(ctx);
+        self.check_launcher(ctx);
+    }
+
+    fn advance_play(&mut self) {
+        if self.pending_play
+            && !self.busy()
+            && self.launcher_receiver.is_none()
+            && self.launcher_handoff.is_none()
+            && self.error.is_none()
+            && self.data_path().is_some()
+            && self
+                .available
+                .as_ref()
+                .is_some_and(|a| updater::supported(a) && !self.needs_update(a))
+        {
+            self.pending_play = false;
+            self.launch();
+        }
     }
 
     fn background(&self, ui: &egui::Ui) {
@@ -624,7 +699,7 @@ impl Launcher {
                         if self.busy() {
                             ui.spinner();
                         }
-                        ui.label(RichText::new(&self.status).size(16.0).strong());
+                        ui.label(RichText::new(tr(&self.status)).size(16.0).strong());
                     });
                     if let Some(progress) = &self.progress {
                         let fraction = if progress.total > 0 {
@@ -644,17 +719,17 @@ impl Launcher {
                                 .desired_height(8.0),
                         );
                         ui.label(
-                            RichText::new(format!(
+                            RichText::new(tr(&format!(
                                 "{} / {}  ·  {}/с  ·  {:.0}%",
                                 bytes(progress.downloaded),
                                 bytes(progress.total),
                                 bytes(speed as u64),
                                 fraction * 100.0
-                            ))
+                            )))
                             .small()
                             .color(MUTED),
                         );
-                        ui.label(RichText::new(&progress.file).small().color(MUTED));
+
                         if ui
                             .small_button(if self.importing {
                                 "Отменить импорт"
@@ -664,6 +739,7 @@ impl Launcher {
                             .clicked()
                         {
                             self.cancel.store(true, Ordering::Relaxed);
+                            self.pending_play = false;
                             if !self.importing {
                                 self.blocked_update = self
                                     .available
@@ -678,35 +754,21 @@ impl Launcher {
                             .map(|i| i.release.version.as_str())
                             .unwrap_or("не установлена");
                         ui.label(
-                            RichText::new(format!(
-                                "Версия игры: {version}  ·  {}",
-                                opensc_launcher::platform()
-                            ))
-                            .small()
-                            .color(MUTED),
+                            RichText::new(tr(&format!("Версия игры: {version}")))
+                                .small()
+                                .color(MUTED),
                         );
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(
-                                    !self.busy(),
-                                    egui::Button::new("Проверить обновления").small(),
-                                )
-                                .clicked()
-                            {
-                                self.check(ctx);
-                                self.next_launcher_check = Instant::now();
-                            }
-                            if ui.small_button("Папка игры и настройки").clicked()
-                            {
-                                self.settings = true;
-                            }
-                        });
+                        ui.label(
+                            RichText::new(tr(&format!("Канал: {}", self.config.channel.label())))
+                                .small()
+                                .color(MUTED),
+                        );
                     }
                     if let Some(error) = &self.error {
                         egui::ScrollArea::vertical()
                             .max_height(48.0)
                             .show(ui, |ui| {
-                                ui.colored_label(Color32::from_rgb(245, 154, 126), error);
+                                ui.colored_label(Color32::from_rgb(245, 154, 126), tr(error));
                             });
                     }
                 },
@@ -718,7 +780,7 @@ impl Launcher {
                     .is_some_and(|a| self.needs_update(a));
                 let text = if self.child.is_some() {
                     "ИГРА ЗАПУЩЕНА"
-                } else if self.busy() {
+                } else if self.busy() || self.pending_play {
                     if self.importing {
                         "ИМПОРТ…"
                     } else if self.progress.is_some() {
@@ -739,17 +801,19 @@ impl Launcher {
                 } else if self.installed.is_none() {
                     "СКАЧАТЬ ИГРУ"
                 } else if self.data_path().is_none() {
-                    "ВЫБРАТЬ DATA"
+                    "ВЫБРАТЬ ФАЙЛЫ"
                 } else {
                     "ИГРАТЬ"
                 };
-                let can_click =
-                    !self.busy() && self.child.is_none() && (self.installed.is_some() || update);
+                let can_click = !self.busy()
+                    && !self.pending_play
+                    && self.child.is_none()
+                    && self.launcher_handoff.is_none();
                 if ui
                     .add_enabled(
                         can_click,
                         egui::Button::new(
-                            RichText::new(text)
+                            RichText::new(tr(text))
                                 .size(21.0)
                                 .strong()
                                 .color(Color32::WHITE),
@@ -760,25 +824,20 @@ impl Launcher {
                     )
                     .clicked()
                 {
-                    if update {
-                        self.blocked_update = None;
-                        self.install(ctx);
-                    } else {
-                        self.launch();
-                    }
+                    self.request_play(ctx);
                 }
                 ui.label(
-                    RichText::new(if self.config.auto_update {
-                        "Обновления загружаются автоматически"
-                    } else {
-                        "Автозагрузка выключена в настройках"
-                    })
-                    .size(10.0)
-                    .color(MUTED),
+                    RichText::new(tr("Проверка при открытии и перед игрой"))
+                        .size(10.0)
+                        .color(MUTED),
                 );
             });
         });
-        ui.label(RichText::new(&self.launcher_status).size(10.0).color(MUTED));
+        ui.label(
+            RichText::new(tr(&self.launcher_status))
+                .size(10.0)
+                .color(MUTED),
+        );
     }
 }
 
@@ -801,6 +860,7 @@ impl Launcher {
 
 impl eframe::App for Launcher {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        UI_LANGUAGE.with(|value| value.set(self.config.language));
         self.tick(ctx);
         self.poll_launcher(ctx);
         ctx.request_repaint_after(Duration::from_millis(if self.busy() { 100 } else { 500 }));
@@ -811,7 +871,7 @@ impl eframe::App for Launcher {
                     .inner_margin(egui::Margin::symmetric(28, 15)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("OpenSC").size(27.0).strong());
                     ui.add_space(18.0);
                     ui.label(
@@ -821,13 +881,12 @@ impl eframe::App for Launcher {
                             .color(ACCENT),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("НАСТРОЙКИ").clicked() {
+                        if ui.button(tr("НАСТРОЙКИ")).clicked() {
                             self.settings = !self.settings;
                         }
-                        if ui.button("СООБЩИТЬ ОБ ОШИБКЕ").clicked() {
+                        if ui.button(tr("СООБЩИТЬ ОБ ОШИБКЕ")).clicked() {
                             self.reports.open = true;
                         }
-                        ui.hyperlink_to("САЙТ ПРОЕКТА", "https://shadow-test.zaikinagroup.ru/");
                     });
                 });
             });
@@ -852,11 +911,11 @@ impl eframe::App for Launcher {
                         ui.add_space((rect.height() * 0.15).clamp(20.0, 80.0));
                         eyebrow(ui, "OPEN SHADOW COMPANY");
                         ui.add_space(12.0);
-                        ui.label(RichText::new("ВЕРНУТЬСЯ\nВ СТРОЙ.").size(if left > 550.0 { 64.0 } else { 50.0 }).strong().color(Color32::from_rgb(244, 239, 223)));
+                        ui.label(RichText::new(tr("ВЕРНУТЬСЯ\nВ СТРОЙ.")).size(if left > 550.0 { 64.0 } else { 50.0 }).strong().color(Color32::from_rgb(244, 239, 223)));
                         ui.add_space(14.0);
-                        ui.label(RichText::new("Новый движок. Знакомые операции.").size(21.0).color(ACCENT));
+                        ui.label(RichText::new(tr("Новый движок. Знакомые операции.")).size(21.0).color(ACCENT));
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Меню, видео и обучение на ресурсах вашей копии Shadow Company: Left for Dead.").size(15.0).color(Color32::from_rgb(203, 207, 194)));
+                        ui.label(RichText::new(tr("Меню, видео и обучение на ресурсах вашей копии Shadow Company: Left for Dead.")).size(15.0).color(Color32::from_rgb(203, 207, 194)));
                         ui.add_space(18.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("RUST / BEVY").monospace().size(10.0).color(MUTED));
@@ -869,7 +928,7 @@ impl eframe::App for Launcher {
                         egui::ScrollArea::vertical().id_salt("news").show(ui, |ui| {
                             eyebrow(ui, "ОБНОВЛЕНИЯ ПРОЕКТА");
                             ui.add_space(8.0);
-                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", "Интерфейс: Русский / English", self.available.as_ref().map(|a| a.release.notes.as_str()).unwrap_or("Новое главное меню, анимация кнопок, современные шрифты и переключение языка интерфейса."));
+                            news_card(ui, "В ЭТОМ ВЫПУСКЕ", self.config.language.native_name(), "Доступны меню, видео и обучение. Полная кампания, сохранения и сетевая игра ещё разрабатываются.");
                             ui.add_space(10.0);
                             news_card(ui, "НАЧАЛО ИГРЫ", "Ваша копия Shadow Company", "Выберите папку игры или образ MDF/MDS в настройках. Лаунчер сам скопирует игровые данные и будет обновлять движок.");
                             ui.add_space(10.0);
@@ -883,54 +942,47 @@ impl eframe::App for Launcher {
             .show(ctx, &self.root, &self.config, self.installed.as_ref());
         if self.settings {
             let mut open = true;
-            egui::Window::new("Настройки лаунчера")
+            egui::Window::new(tr("Настройки лаунчера"))
                 .open(&mut open)
                 .default_width(700.0)
                 .vscroll(true)
                 .show(ctx, |ui| {
-                    self.resource_card(ui, ctx);
-                    ui.add_space(14.0);
-                    ui.add_enabled_ui(!self.busy(), |ui| {
-                    ui.checkbox(
-                            &mut self.config.auto_update,
-                            "Обновлять игру при запуске лаунчера",
-                        );
-                    });
-                    ui.checkbox(&mut self.config.auto_update_launcher,"Автоматически обновлять лаунчер");
-                    ui.label(RichText::new(&self.launcher_status).small().color(MUTED));
-                    ui.label("Улучшенные ресурсы (пусто — папка overrides в OpenSC)");
-                    ui.add_enabled(
-                        !self.busy() && self.child.is_none(),
-                        egui::TextEdit::singleline(&mut self.config.overrides_path)
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.label(RichText::new("Проверка при открытии и каждые 60 секунд. Во время игры установка откладывается до её завершения.").small().color(MUTED));
-                    ui.label("Папка установок и журналов");
-                    ui.label(
-                        RichText::new(self.root.display().to_string())
-                            .monospace()
-                            .small(),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Сохранить и проверить").clicked() {
-                            self.save(); self.next_check = Instant::now();
-                            self.next_launcher_check = Instant::now();
-                        }
-                        if ui
-                            .add_enabled(
-                                !self.busy() && self.installed.is_some(),
-                                egui::Button::new("Проверить файлы"),
-                            )
-                            .clicked()
-                        {
-                            self.verify(ctx);
-                        }
-                    });
+                    ui.heading(tr("Язык интерфейса"));
+                    let mut language = self.config.language;
+                    ui.add_enabled_ui(!self.busy() && self.child.is_none(), |ui| { egui::ComboBox::from_id_salt("language")
+                        .selected_text(language.native_name()).width(230.0)
+                        .show_ui(ui, |ui| { for candidate in Locale::ALL { ui.selectable_value(&mut language, candidate, candidate.native_name()); } }); });
+                    if language != self.config.language {
+                        self.config.language = language;
+                        install_fonts(ctx, language);
+                        UI_LANGUAGE.with(|value| value.set(language));
+                        self.save();
+                    }
+                    ui.label(RichText::new(tr("Выбор языка применяется в лаунчере и игре.")).small().color(MUTED));
                     ui.separator();
-                    ui.label(RichText::new(format!("Лаунчер {}", env!("CARGO_PKG_VERSION"))).small().color(MUTED));
-                    egui::CollapsingHeader::new("Журнал действий").show(ui, |ui| {
-                        for line in self.activity.iter().rev().take(12) { ui.label(line); }
+                    ui.heading(tr("Канал обновлений"));
+                    let mut channel = self.config.channel;
+                    ui.add_enabled_ui(!self.busy() && self.child.is_none(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut channel, UpdateChannel::Stable, tr("Стабильный"));
+                            ui.selectable_value(&mut channel, UpdateChannel::Test, tr("Тестовый"));
+                        });
                     });
+                    if channel != self.config.channel {
+                        self.select_channel(channel);
+                    }
+                    ui.label(RichText::new(tr(match self.config.channel {
+                        UpdateChannel::Stable => "Проверенные сборки. Рекомендуется для обычной игры.",
+                        UpdateChannel::Test => "Новые возможности для тестирования. Возможны ошибки.",
+                    })).small().color(MUTED));
+                    ui.label(RichText::new(tr("Выбор сохраняется автоматически. Обновления проверяются при открытии лаунчера и перед запуском игры.")).small().color(MUTED));
+                    ui.separator();
+                    self.resource_card(ui, ctx);
+                    ui.separator();
+                    if ui.add_enabled(!self.busy() && self.child.is_none() && self.installed.is_some(), egui::Button::new(tr("Проверить файлы движка"))).clicked() {
+                        self.verify(ctx);
+                    }
+                    ui.label(RichText::new(tr(&format!("Лаунчер {}", env!("CARGO_PKG_VERSION")))).small().color(MUTED));
                 });
             self.settings = open;
         }
@@ -946,19 +998,7 @@ impl eframe::App for Launcher {
 }
 
 fn eyebrow(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(11.0).strong().color(ACCENT));
-}
-
-fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(49, 61, 51)))
-        .corner_radius(4)
-        .inner_margin(18)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            contents(ui);
-        });
+    ui.label(RichText::new(tr(text)).size(11.0).strong().color(ACCENT));
 }
 
 fn bytes(value: u64) -> String {
@@ -978,14 +1018,41 @@ fn news_card(ui: &mut egui::Ui, tag: &str, title: &str, body: &str) {
         .inner_margin(16)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            eyebrow(ui, tag);
-            ui.label(RichText::new(title).size(18.0).strong());
+            eyebrow(ui, &tr(tag));
+            ui.label(RichText::new(tr(title)).size(18.0).strong());
             ui.label(
-                RichText::new(body)
+                RichText::new(tr(body))
                     .size(13.0)
                     .color(Color32::from_rgb(190, 198, 185)),
             );
         });
+}
+
+fn install_fonts(ctx: &egui::Context, language: Locale) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "opensc-latin".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../engine/crates/shadow-viewer/assets/fonts/DejaVuSans.ttf"
+        ))),
+    );
+    for family in fonts.families.values_mut() {
+        family.insert(0, "opensc-latin".into());
+    }
+    for locale in std::iter::once(language)
+        .chain(Locale::ALL.into_iter().filter(|locale| *locale != language))
+    {
+        if let Some(bytes) = locale.cjk_font() {
+            fonts.font_data.insert(
+                locale.code().into(),
+                std::sync::Arc::new(egui::FontData::from_static(bytes)),
+            );
+            for family in fonts.families.values_mut() {
+                family.push(locale.code().into());
+            }
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]
