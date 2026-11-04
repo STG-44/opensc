@@ -134,7 +134,9 @@ mod tests {
             panic!("indices");
         };
         let crosses: Vec<_> = indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let [a, b, c] = [t[0], t[1], t[2]].map(|i| Vec3::from_array(positions[i as usize]));
                 (b - a).cross(c - a)
