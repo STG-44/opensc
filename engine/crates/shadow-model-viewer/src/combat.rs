@@ -714,15 +714,28 @@ pub fn input(
         }
     }
 }
+/// Advance gameplay before perception reads this frame's shot events.
+#[allow(clippy::too_many_arguments)]
+pub fn advance(
+    combat: Option<ResMut<Combat>>,
+    actor: Option<ResMut<player::Player>>,
+    tutorial: Option<ResMut<Tutorial>>,
+    item: Option<Res<Pickup>>,
+    inventory: Option<ResMut<Inventory>>,
+    time: Res<Time>,
+) {
+    if let (Some(mut c), Some(mut p), Some(mut t), Some(item), Some(mut inv)) =
+        (combat, actor, tutorial, item, inventory)
+    {
+        c.update_with_inventory(&mut p, &mut t, &item, &mut inv, time.delta_secs());
+        inv.observe(&item, &c);
+    }
+}
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn sync(
     mut commands: Commands,
     combat: Option<ResMut<Combat>>,
-    actor: Option<ResMut<player::Player>>,
-    t: Option<ResMut<Tutorial>>,
-    item: Option<Res<Pickup>>,
-    inventory: Option<ResMut<Inventory>>,
-    time: Res<Time>,
+    inventory: Option<Res<Inventory>>,
     mut bones: Query<(&GuardBone, &mut Transform), Without<GuardRoot>>,
     mut roots: Query<
         (&GuardRoot, &mut Transform, &mut Visibility),
@@ -734,13 +747,9 @@ pub fn sync(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let (Some(mut c), Some(mut p), Some(mut t), Some(item), Some(mut inv)) =
-        (combat, actor, t, item, inventory)
-    else {
+    let (Some(mut c), Some(inv)) = (combat, inventory) else {
         return;
     };
-    c.update_with_inventory(&mut p, &mut t, &item, &mut inv, time.delta_secs());
-    inv.observe(&item, &c);
     for (root, mut transform, mut visibility) in &mut roots {
         let guard = c.guard_at(root.0);
         *transform = guard.guard.transform();

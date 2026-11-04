@@ -510,15 +510,16 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 )
                     .chain(),
                 (
-                    (
-                        crate::gate::tick,
-                        crate::vehicle::tick,
-                        crate::perception::update,
-                    )
-                        .chain(),
+                    (crate::gate::tick, crate::vehicle::tick).chain(),
                     pickup::sync,
                     combat::traces,
-                    (crate::body_carry::tick, combat::sync).chain(),
+                    (
+                        crate::body_carry::tick,
+                        combat::advance,
+                        crate::perception::update,
+                        combat::sync,
+                    )
+                        .chain(),
                     inventory::sync,
                     grenade::sync,
                     fence::sync,

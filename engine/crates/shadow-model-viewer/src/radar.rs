@@ -61,11 +61,17 @@ pub(crate) fn uv(position: Vec3, extent: Vec2) -> Vec2 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NoiseRing {
+    pub center: Vec2,
+    pub radius: Vec2,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Contact {
     pub position: Vec2,
     pub color: [u8; 4],
     pub selected: bool,
     pub friendly: bool,
+    pub noise: Option<NoiseRing>,
 }
 pub(crate) const FRIEND: [u8; 4] = [56, 255, 48, 255];
 pub(crate) const ENEMY: [u8; 4] = [255, 48, 40, 255];
@@ -158,6 +164,15 @@ impl Radar {
                 canvas.pixel(IVec2::new(x as i32, y as i32), color);
             }
         }
+        for contact in &frame.contacts {
+            if let Some(noise) = contact
+                .noise
+                .as_ref()
+                .filter(|_| contact.selected && contact.friendly)
+            {
+                canvas.noise_ring(view, noise);
+            }
+        }
         let to_pixel = |uv| view.project(uv) * (size.as_vec2() - Vec2::ONE);
         let camera: Vec<_> = frame.camera.iter().map(|&p| to_pixel(p)).collect();
         // Dark backing keeps the white camera footprint visible over pale terrain.
@@ -237,6 +252,30 @@ struct Canvas {
     pixels: Vec<u8>,
 }
 impl Canvas {
+    fn noise_ring(&mut self, view: View, ring: &NoiseRing) {
+        if !ring.center.is_finite() || !ring.radius.is_finite() || ring.radius.min_element() <= 0.0
+        {
+            return;
+        }
+        let size = self.size.as_vec2() - Vec2::ONE;
+        let point = |i: usize| {
+            let angle = i as f32 * std::f32::consts::TAU / 96.0;
+            view.project(ring.center + Vec2::new(angle.cos(), angle.sin()) * ring.radius) * size
+        };
+        for i in 0..96 {
+            let a = point(i);
+            let b = point(i + 1);
+            let max = self.size.as_vec2() - Vec2::ONE;
+            if (a.x < 0.0 && b.x < 0.0)
+                || (a.y < 0.0 && b.y < 0.0)
+                || (a.x > max.x && b.x > max.x)
+                || (a.y > max.y && b.y > max.y)
+            {
+                continue;
+            }
+            self.line(a, b, [44, 168, 72, 255], 0);
+        }
+    }
     fn pixel(&mut self, p: IVec2, color: [u8; 4]) {
         if p.x >= 0 && p.y >= 0 && p.x < self.size.x as i32 && p.y < self.size.y as i32 {
             let i = ((p.y as u32 * self.size.x + p.x as u32) * 4) as usize;
@@ -340,6 +379,49 @@ pub(crate) fn footprint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn noise_outline_uses_the_same_rotation_zoom_and_clipping_as_contacts() {
+        for locked in [true, false] {
+            let view = View::new(
+                Vec3::new(50.0, 0.0, -50.0),
+                Vec2::splat(100.0),
+                2.0,
+                locked,
+                0.7,
+            );
+            let mut canvas = Canvas {
+                size: UVec2::splat(101),
+                pixels: vec![0; 101 * 101 * 4],
+            };
+            let ring = NoiseRing {
+                center: Vec2::splat(0.5),
+                radius: Vec2::splat(0.1),
+            };
+            canvas.noise_ring(view, &ring);
+            let expected = (view.project(ring.center + Vec2::X * 0.1) * 100.0)
+                .round()
+                .as_ivec2();
+            let index = ((expected.y as u32 * 101 + expected.x as u32) * 4) as usize;
+            assert_eq!(&canvas.pixels[index..index + 4], &[44, 168, 72, 255]);
+            assert_eq!(&canvas.pixels[(50 * 101 + 50) * 4..][..4], &[0; 4]);
+            let count = canvas
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] > 0)
+                .count();
+            assert!((80..200).contains(&count), "ring must be an outline");
+            canvas.noise_ring(
+                view,
+                &NoiseRing {
+                    center: Vec2::ZERO,
+                    radius: Vec2::splat(100000.0),
+                },
+            );
+            assert_eq!(canvas.pixels.len(), 101 * 101 * 4);
+        }
+    }
     #[test]
     fn locked_map_and_rotating_map_share_invertible_click_coordinates() {
         for locked in [true, false] {

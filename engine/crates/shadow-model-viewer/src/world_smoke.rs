@@ -4,11 +4,11 @@ use crate::{navigation, perception, player};
 use bevy::{mesh::VertexAttributeValues, window::PrimaryWindow};
 use std::path::Path;
 
-struct Fixture {
-    from: Vec3,
-    to: Vec3,
-    center: Vec3,
-    name: String,
+pub(super) struct Fixture {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub center: Vec3,
+    pub name: String,
 }
 pub(super) struct Checks {
     phase: u8,
@@ -36,7 +36,7 @@ impl Default for Checks {
         }
     }
 }
-fn fixtures(world: &mut World) -> Vec<Fixture> {
+pub(super) fn fixtures(world: &mut World) -> Vec<Fixture> {
     let mut boxes = Vec::new();
     for (name, transform, children) in world
         .query_filtered::<(&Name, &GlobalTransform, &Children), With<crate::pickup::MapObject>>()
@@ -97,7 +97,7 @@ fn fixtures(world: &mut World) -> Vec<Fixture> {
         })
         .collect()
 }
-fn teleport(actor: &mut player::Player, position: Vec3) {
+pub(super) fn teleport(actor: &mut player::Player, position: Vec3) {
     actor.position = position;
     actor.destination = None;
     actor.route.clear();

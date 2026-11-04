@@ -34,6 +34,8 @@ pub struct GunDefinition {
     pub auto_equip: bool,
     pub burst_count: u32,
     pub burst_round_delay: f32,
+    pub noise_radius: f32,
+    pub noise_level: u32,
     pub sound: Vec<u8>,
     pub source: serde_json::Value,
 }
@@ -115,6 +117,14 @@ pub fn definition(
     let delay_ms = field(gun, "FIRE_DELAY")?.parse::<u32>()?;
     let range_source = field(gun, "MAX_RANGE")?.parse::<f32>()?;
     let damage_mod = field(gun, "AMMO_DAMAGE_MOD")?.parse::<f32>()?;
+    let noise_radius_source = field(gun, "FIRE_NOISE_RADIUS")?.parse::<f32>()?;
+    let noise_level = field(gun, "FIRE_NOISE_LEVEL")?.parse::<u32>()?;
+    if !noise_radius_source.is_finite()
+        || !(0.0..=1000000.0).contains(&noise_radius_source)
+        || noise_level > 100
+    {
+        return Err("invalid gun noise parameters".into());
+    }
     if !(1..=10000).contains(&magazine)
         || !(1..=60000).contains(&delay_ms)
         || !range_source.is_finite()
@@ -148,7 +158,7 @@ pub fn definition(
     let sound = catalog.read(sound_path)?;
     validate_sound(&sound)?;
     let source = serde_json::json!({"profile":path,"profile_origin":catalog.source_label(path)?,"model":model,
-        "magazine_size":magazine,"max_range_source_units":range_source,"fire_delay_ms":delay_ms,
+        "fire_noise_radius_source_units":noise_radius_source,"fire_noise_level":noise_level,"magazine_size":magazine,"max_range_source_units":range_source,"fire_delay_ms":delay_ms,
         "fire_delay_rand_ms":field(gun,"FIRE_DELAY_RAND")?.parse::<u32>()?,"reload_delay_ms":field(gun,"RELOAD_DELAY")?.parse::<u32>()?,
         "ammo_type":"9mm","shell_profile":shell_path,"base_damage":base_damage,"rand_damage":field(shell,"RAND_DAMAGE")?.parse::<f32>()?,"ammo_damage_mod":damage_mod,
         "prototype_damage":base_damage*damage_mod/100.0,"damage_formula_original_verified":false,"accuracy_original_verified":false,
@@ -164,6 +174,8 @@ pub fn definition(
         auto_equip,
         burst_count,
         burst_round_delay: burst_round_ms as f32 / 1000.0,
+        noise_radius: noise_radius_source * WORLD_SCALE,
+        noise_level,
         sound,
         source,
     })
@@ -791,6 +803,8 @@ pub(crate) mod tests {
                 auto_equip: false,
                 burst_count: 1,
                 burst_round_delay: 0.001,
+                noise_radius: 36.0,
+                noise_level: 3,
                 sound: Vec::new(),
                 source: serde_json::Value::Null,
             },

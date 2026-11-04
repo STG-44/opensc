@@ -63,7 +63,8 @@ original control map is in the [Russian guide](README.ru.md).
 
 `navigation.rs` plans paths
 against character collision geometry. `perception.rs`
-shares team visibility with enemy rendering and the radar.
+shares team visibility with enemy rendering and the radar. `hearing.rs` records
+short-lived sound stimuli and idle guard reactions independently of sight.
 `radar.rs` uses one invertible transform
 for the map, markers, camera outline and mouse input.
 
@@ -85,7 +86,8 @@ shadow-game --game-dir "/path/to/game" --settings "/tmp/opensc-check/settings.js
 
 The radar scenario exercises UI picking, coordinates, dragging, resizing,
 original-scenery detours, visibility and exploration memory.
-`--input-smoke-json` exercises inventory and body carrying. These scenarios
+`--input-smoke-json` exercises inventory and body carrying;
+`--hearing-smoke-json` checks sound, guard turning, pause/expiry and the noise ring. These scenarios
 inject input events; they do not certify physical input or every driver.
 
 ## Packaging and limits
@@ -97,8 +99,8 @@ creates the versioned update channel from verified packages.
 Original game archives are excluded.
 
 Current limits include incomplete campaign/AI behavior, several HUD commands,
-lighting/hearing perception modifiers, mission saves and full executable
-compatibility. The camera outline uses a horizontal reference plane; radar fog
+lighting perception modifiers, complete hearing-driven AI, mission saves and
+full executable compatibility. The camera outline uses a horizontal reference plane; radar fog
 does not darken the complete 3D terrain. See [tactical systems](docs/TACTICAL-SYSTEMS.md).
 
 Project-owned engine source uses the [MIT License](LICENSE); dependency, font

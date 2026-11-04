@@ -170,6 +170,7 @@ struct Key {
 #[derive(Resource)]
 pub(crate) struct VisibilityState {
     settings: Settings,
+    pub hearing: Option<crate::hearing::HearingState>,
     pub size: UVec2,
     pub explored: Vec<bool>,
     pub visible: Vec<bool>,
@@ -185,9 +186,11 @@ impl VisibilityState {
     pub fn prepare(catalog: &AssetCatalog) -> Result<Self, Box<dyn Error>> {
         let path = "config/perception_var_defs.txt";
         let settings = Settings::read(&config_lines(&catalog.read(path)?)?)?;
-        let source = serde_json::json!({"parameters":path,"origin":catalog.source_label(path)?,"base_range_metres":settings.base,"perception_range_modifier_metres":settings.modifier,"auto_seen_range_metres":settings.near,"refresh_seconds":settings.period,"terrain_line_of_sight":true,"opaque_geometry_line_of_sight":true,"lighting_modifiers_implemented":false,"hearing_implemented":false,"original_exe_formula_verified":false});
+        let hearing = crate::hearing::HearingState::prepare(catalog)?;
+        let source = serde_json::json!({"hearing":hearing.source.clone(),"parameters":path,"origin":catalog.source_label(path)?,"base_range_metres":settings.base,"perception_range_modifier_metres":settings.modifier,"auto_seen_range_metres":settings.near,"refresh_seconds":settings.period,"terrain_line_of_sight":true,"opaque_geometry_line_of_sight":true,"lighting_modifiers_implemented":false,"hearing_implemented":true,"original_exe_formula_verified":false});
         Ok(Self {
             settings,
+            hearing: Some(hearing),
             size: UVec2::ZERO,
             explored: vec![],
             visible: vec![],
@@ -220,6 +223,9 @@ impl VisibilityState {
         }
     }
     pub fn reset(&mut self) {
+        if let Some(hearing) = &mut self.hearing {
+            hearing.reset();
+        }
         self.explored.fill(false);
         self.visible.fill(false);
         self.contacts.fill(false);
@@ -319,7 +325,7 @@ pub(crate) fn line_of_sight(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update(
     visibility: Option<ResMut<VisibilityState>>,
-    time: Res<Time<Real>>,
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     actor: Option<Res<crate::player::Player>>,
     party: Option<Res<crate::party::Party>>,
@@ -328,6 +334,7 @@ pub(crate) fn update(
     geometry: Option<Res<crate::pickup::Pickup>>,
     preview: Res<crate::training::Preview>,
     inventory: Option<Res<crate::inventory::Inventory>>,
+    vehicle: Option<Res<crate::vehicle::Vehicle>>,
     tutorial: Option<Res<crate::tutorial::Tutorial>>,
 ) {
     let (Some(mut vis), Some(actor), Some(party), Some(mut combat), Some(geometry), Some(grid)) =
@@ -346,7 +353,7 @@ pub(crate) fn update(
         vis.reset();
     }
     let mut observers = Vec::new();
-    if medical.is_none_or(|m| m.health > 0.0) {
+    if medical.as_ref().is_none_or(|m| m.health > 0.0) {
         observers.push(Person::actor(&actor, true));
     }
     if party.recruited {
@@ -365,6 +372,76 @@ pub(crate) fn update(
         geometry: geometry.revision(),
     };
     vis.observe(time.elapsed_secs_f64(), key, grid, &geometry);
+    let paused = actor.playback.paused
+        || tutorial.as_ref().is_some_and(|t| t.pausing())
+        || inventory.as_ref().is_some_and(|i| i.open);
+    if let Some(hearing) = &mut vis.hearing {
+        use crate::hearing::{Actor, ActorId, Shot};
+        let sample = |id, p: &crate::player::Player, alive, footsteps| Actor {
+            id,
+            position: p.position,
+            infiltration: p.senses.infiltration,
+            posture: p.posture.index(),
+            running: p.running,
+            alive,
+            footsteps,
+        };
+        let mut people = vec![sample(
+            ActorId::John,
+            &actor,
+            medical.as_ref().is_none_or(|m| m.health > 0.0),
+            vehicle.as_ref().is_none_or(|v| !v.occupied),
+        )];
+        if party.recruited {
+            people.push(sample(ActorId::Jack, &party.jack, true, true));
+        }
+        for i in 0..combat.guard_count() {
+            let guard = combat.guard_at(i);
+            people.push(sample(
+                ActorId::Guard(i),
+                &guard.guard,
+                guard.alive(),
+                !guard.carried,
+            ));
+        }
+        let shots: Vec<_> = combat
+            .pending_shots
+            .iter()
+            .filter_map(|shot| {
+                let gun = inventory.as_ref()?.gun_for(shot.weapon)?;
+                Some(Shot {
+                    source: ActorId::John,
+                    position: shot.from,
+                    radius: gun.noise_radius,
+                    level: gun.noise_level,
+                })
+            })
+            .collect();
+        hearing.tick(time.delta_secs(), &people, &shots, paused);
+        if !paused {
+            for i in 0..combat.guard_count() {
+                let Some(contact) = hearing.contact(ActorId::Guard(i)) else {
+                    continue;
+                };
+                let target = contact.position;
+                let guard = combat.guard_mut(i);
+                if guard.alive()
+                    && !guard.carried
+                    && !guard.ordered
+                    && guard.guard.destination.is_none()
+                    && guard.guard.action.is_none()
+                {
+                    guard.guard.heading = crate::hearing::turn_towards(
+                        guard.guard.heading,
+                        guard.guard.position,
+                        target,
+                        time.delta_secs(),
+                    );
+                }
+            }
+        }
+    }
+
     for i in 0..combat.guard_count() {
         combat.guard_mut(i).detected = vis.contact(i);
     }
@@ -436,6 +513,7 @@ mod tests {
         config.modifier = 0.0;
         let mut v = VisibilityState {
             settings: config,
+            hearing: None,
             size: UVec2::ZERO,
             explored: vec![],
             visible: vec![],

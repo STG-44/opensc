@@ -266,6 +266,8 @@ pub(crate) mod tests {
             auto_equip: false,
             burst_count: 3,
             burst_round_delay: 0.08,
+            noise_radius: 48.0,
+            noise_level: 4,
             sound: Vec::new(),
             source: serde_json::Value::Null,
         });

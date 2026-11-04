@@ -540,8 +540,8 @@ pub fn visuals(
         let extent = radar::extent(grid);
         let view = h.radar.view(&orbit, grid);
         let mut contacts = Vec::new();
-        for (actor, color) in [
-            (&*john, radar::FRIEND),
+        for (actor, color, sound_id) in [
+            (&*john, radar::FRIEND, crate::hearing::ActorId::John),
             (
                 &party.jack,
                 if party.recruited {
@@ -549,6 +549,7 @@ pub fn visuals(
                 } else {
                     radar::NEUTRAL
                 },
+                crate::hearing::ActorId::Jack,
             ),
         ] {
             if color == radar::NEUTRAL && visibility.as_ref().is_some_and(|v| !v.neutral) {
@@ -559,6 +560,18 @@ pub fn visuals(
                 color,
                 selected: actor.selected && (color == radar::FRIEND),
                 friendly: true,
+                noise: if actor.selected && color == radar::FRIEND {
+                    visibility
+                        .as_ref()
+                        .and_then(|v| v.hearing.as_ref())
+                        .and_then(|h| h.radius(sound_id))
+                        .map(|(position, radius)| radar::NoiseRing {
+                            center: radar::uv(position, extent),
+                            radius: Vec2::splat(radius) / extent,
+                        })
+                } else {
+                    None
+                },
             });
         }
         if let Some(combat) = combat {
@@ -570,6 +583,7 @@ pub fn visuals(
                         color: radar::ENEMY,
                         selected: false,
                         friendly: false,
+                        noise: None,
                     });
                 }
             }

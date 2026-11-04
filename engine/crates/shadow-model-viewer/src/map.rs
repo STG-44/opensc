@@ -7,6 +7,7 @@ mod evacuation;
 mod fence;
 mod gate;
 mod grenade;
+mod hearing;
 mod hud;
 mod hud_layout;
 mod inventory;

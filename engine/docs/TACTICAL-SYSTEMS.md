@@ -1,4 +1,4 @@
-# Radar, visibility and obstacle navigation
+# Radar, perception and obstacle navigation
 
 These systems use the player's original map and scenery. Their current scope
 is the training mission and its two controllable characters.
@@ -56,9 +56,43 @@ the original data) and is cached while relevant world state is unchanged.
 
 The fog grid uses approximately 2 m cells. Terrain line tests sample the height
 field; opaque scenery uses its actual triangles through a spatial index.
-Lighting, hearing, night-vision equipment and the complete original AI perception
+Lighting, night-vision equipment and the complete original AI perception
 model remain outside this implementation. Fog darkens the radar, not the full
 3D terrain. Enemy AI behavior itself is still incomplete.
+
+## Hearing and noise
+
+`hearing.rs` keeps auditory memory separate from visual contacts and exploration.
+An audible event records its emitted position for `audible_duration` (2.5 seconds
+in the original configuration). An idle, living training guard turns toward the
+strongest remembered hostile sound, then the most recent sound of equal level.
+It does not track an unseen character after the sound. Entering the radius of
+an earlier shot cannot create a new hearing event. Allies ignore friendly noise.
+
+Footsteps use resolved displacement, including collision and navigation. A blocked
+movement order, mission placement, riding in the vehicle or carrying a corpse
+does not independently generate footsteps for the blocked/riding/carried actor.
+The radius uses the source stance/walk/run values and this provisional formula:
+
+`noise_base + stance_motion_noise * max(stealth_skill_base - Infiltration, 0) * stealth_skill_mod`
+
+Source centimetres are converted to metres. With Infiltration 0, standing walk/run
+radii are approximately 4.54/20.63 m; with Infiltration 100, 1.51/6.88 m.
+This movement formula is **not yet verified against the original executable**.
+Gun radii and levels come directly from `FIRE_NOISE_RADIUS` and `FIRE_NOISE_LEVEL`
+in the gun profile: BDA is 36 m/level 3; Uzi is 48 m/level 4. Each combat round
+creates a stimulus, including burst rounds without a separate audio sample.
+The audio volume setting does not change tactical hearing.
+
+A green outline on the radar shows the strongest active noise radius of a
+selected friendly character at the sound's last position. It uses the same
+rotation and zoom as the map and disappears when the event expires. Inventory
+and world pauses freeze auditory memory; mission restart clears it.
+
+Hearing never reveals enemy models, precise hostile radar contacts or terrain.
+Sound currently propagates by distance without wall/material attenuation. Guard
+investigation routes, pursuit, return fire and full original AI are not implemented.
+The guard's turn is a first reaction, not a complete combat behavior model.
 
 ## Ground navigation
 
@@ -97,3 +131,10 @@ an original prop through mouse events, exercises Jack's independent route,
 checks occlusion against an original structure, shared team sight and fog memory.
 Scene positions and recruitment state are seeded by the harness. Physical
 pointer use and Windows/macOS rendering require separate hands-on checks.
+
+`--hearing-smoke-json FILE.json` checks the scheduled perception/combat/HUD path
+with isolated settings. It seeds shot events and an original opaque-structure
+fixture, verifies hidden enemy models and unchanged fog, guard turning, the radar
+noise outline, pause/expiry/reset, and footsteps from an actual animation-driven
+running order. This is a native Linux regression; it does not replace interactive
+Windows/macOS checks or verification against the original executable.
