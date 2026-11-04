@@ -1274,6 +1274,10 @@ mod tests {
         assert!(v.position.z < -52.0 && v.speed > 0.0);
         v.position = Vec3::new(50.0, 0.0, -298.8);
         v.heading = 0.0;
+        // The former last-sample limit is inside the reconstructed outer cell.
+        v.drive(1.0, 0.0, 0.25, &g, None);
+        assert!(v.position.z < -300.0 && v.speed > 0.0);
+        v.position.z = -g.extent()[1] * WORLD_SCALE + 1.2;
         v.drive(1.0, 0.0, 0.25, &g, None);
         assert_eq!(v.speed, 0.0);
     }
