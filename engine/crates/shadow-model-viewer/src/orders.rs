@@ -24,15 +24,11 @@ pub fn terrain_hit(grid: &TerrainGrid, origin: Vec3, direction: Vec3) -> Option<
     }
     let c = &grid.config;
     let point = |x: usize, y: usize| {
-        Vec3::new(
-            x as f32 * c.edge,
-            grid.heights[y * c.width + x],
-            -(y as f32) * c.edge,
-        ) * WORLD_SCALE
+        Vec3::new(x as f32 * c.edge, grid.sample(x, y), -(y as f32) * c.edge) * WORLD_SCALE
     };
     let mut nearest = f32::INFINITY;
-    for y in 0..c.height - 1 {
-        for x in 0..c.width - 1 {
+    for y in 0..c.height {
+        for x in 0..c.width {
             let a = point(x, y);
             let b = point(x + 1, y);
             let d = point(x + 1, y + 1);
@@ -89,13 +85,17 @@ mod tests {
             (0.5, -0.5),
             (0.0, 0.0),
             (1.0, -1.0),
+            (1.5, -0.5),
+            (0.5, -1.5),
+            (1.99, -1.99),
+            (2.0, -2.0),
         ] {
             let hit = terrain_hit(&grid, Vec3::new(x, 10.0, z), -Vec3::Y).unwrap();
             assert!((hit.y - grid.height_at(x / 0.01, -z / 0.01).unwrap() * 0.01).abs() < 1e-5);
         }
         assert!(terrain_hit(&grid, Vec3::new(0.5, 0.0, -0.5), Vec3::Y).is_some());
         assert!(terrain_hit(&grid, Vec3::new(0.5, 10.0, -0.5), Vec3::Y).is_none());
-        assert!(terrain_hit(&grid, Vec3::new(2.0, 10.0, 0.0), -Vec3::Y).is_none());
+        assert!(terrain_hit(&grid, Vec3::new(2.01, 10.0, 0.0), -Vec3::Y).is_none());
         assert!(terrain_hit(&grid, Vec3::splat(f32::NAN), Vec3::Y).is_none());
         assert!(terrain_hit(&grid, Vec3::ZERO, Vec3::ZERO).is_none());
     }

@@ -22,7 +22,15 @@ fn terrain_inverts_indices_and_samples_the_actual_mesh_triangles() {
     assert_eq!(grid.height_at(200.0, 200.0), Some(100.0));
     assert_eq!(grid.height_at(-0.1, 0.0), None);
     assert_eq!(grid.height_at(f32::NAN, 0.0), None);
-    assert_eq!(grid.height_at(200.1, 0.0), None);
+    // Preserve every original interior sample/interpolation and repeat the
+    // last row/column across the outer cell. The atlas covers two full cells.
+    assert_eq!(grid.extent(), [400.0, 400.0]);
+    assert_eq!(grid.height_at(300.0, 100.0), Some(50.0));
+    assert_eq!(grid.height_at(100.0, 300.0), Some(50.0));
+    assert_eq!(grid.height_at(300.0, 300.0), Some(100.0));
+    assert_eq!(grid.height_at(400.0, 400.0), Some(100.0));
+    assert_eq!(grid.height_at(400.1, 0.0), None);
+    assert_eq!(grid.height_at(0.0, 400.1), None);
 }
 #[test]
 fn terrain_rejects_bad_sizes_scales_names_and_mismatched_pcx() {

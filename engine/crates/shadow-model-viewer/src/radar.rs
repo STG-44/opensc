@@ -45,16 +45,10 @@ impl View {
     }
 }
 pub(crate) fn extent(grid: &TerrainGrid) -> Vec2 {
-    Vec2::new(grid.config.width as f32, grid.config.height as f32)
-        * grid.config.edge
-        * crate::map_scene::WORLD_SCALE
+    Vec2::from_array(grid.extent()) * crate::map_scene::WORLD_SCALE
 }
 fn playable_extent(grid: &TerrainGrid) -> Vec2 {
-    Vec2::new(
-        (grid.config.width - 1) as f32,
-        (grid.config.height - 1) as f32,
-    ) * grid.config.edge
-        * crate::map_scene::WORLD_SCALE
+    extent(grid)
 }
 pub(crate) fn uv(position: Vec3, extent: Vec2) -> Vec2 {
     Vec2::new(position.x, -position.z) / extent
@@ -456,7 +450,7 @@ mod tests {
         }
     }
     #[test]
-    fn click_at_texture_edge_stays_on_last_playable_terrain_sample() {
+    fn click_at_texture_edge_reaches_the_reconstructed_outer_cell() {
         let (_, _, _, grid) = crate::party::tests::fixture();
         let view = View::new(Vec3::ZERO, extent(&grid), 1.0, true, 0.0);
         let p = view.world(Vec2::ONE, &grid);

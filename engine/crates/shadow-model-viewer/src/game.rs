@@ -46,7 +46,12 @@ fn main() {
     let standalone = std::env::args().any(|a| {
         matches!(
             a.as_str(),
-            "--player" | "--player-json" | "--scene-json" | "--map" | "--terrain"
+            "--player"
+                | "--player-json"
+                | "--scene-json"
+                | "--map"
+                | "--terrain"
+                | "--camera-orbit"
         )
     });
     let result = if standalone {

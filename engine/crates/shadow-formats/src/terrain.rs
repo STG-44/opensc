@@ -97,6 +97,18 @@ pub struct TerrainGrid {
     pub heights: Vec<f32>,
 }
 impl TerrainGrid {
+    /// Full terrain atlas extent in source units. The last cell repeats the
+    /// boundary samples rather than leaving a hole behind edge scenery.
+    pub fn extent(&self) -> [f32; 2] {
+        [
+            self.config.width as f32 * self.config.edge,
+            self.config.height as f32 * self.config.edge,
+        ]
+    }
+    pub fn sample(&self, x: usize, y: usize) -> f32 {
+        self.heights
+            [y.min(self.config.height - 1) * self.config.width + x.min(self.config.width - 1)]
+    }
     pub fn new(config: TerrainConfig, image: PcxImage) -> Result<Self> {
         if (config.width, config.height) != (image.width, image.height)
             || image.width.checked_mul(image.height) != Some(image.pixels.len())
@@ -122,19 +134,19 @@ impl TerrainGrid {
             || !v.is_finite()
             || u < 0.0
             || v < 0.0
-            || u > (c.width - 1) as f32
-            || v > (c.height - 1) as f32
+            || u > c.width as f32
+            || v > c.height as f32
         {
             return None;
         }
-        let a = (u as usize).min(c.width - 2);
-        let b = (v as usize).min(c.height - 2);
+        let a = (u as usize).min(c.width - 1);
+        let b = (v as usize).min(c.height - 1);
         let du = u - a as f32;
         let dv = v - b as f32;
-        let h00 = self.heights[b * c.width + a];
-        let h10 = self.heights[b * c.width + a + 1];
-        let h01 = self.heights[(b + 1) * c.width + a];
-        let h11 = self.heights[(b + 1) * c.width + a + 1];
+        let h00 = self.sample(a, b);
+        let h10 = self.sample(a + 1, b);
+        let h01 = self.sample(a, b + 1);
+        let h11 = self.sample(a + 1, b + 1);
         Some(if du >= dv {
             h00 + (h10 - h00) * du + (h11 - h10) * dv
         } else {

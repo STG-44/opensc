@@ -2,6 +2,7 @@
 use bevy::prelude::*;
 use shadow_formats::{AssetCatalog, SmfModel};
 use std::{collections::BTreeMap, error::Error, f32::consts::FRAC_PI_2};
+mod wall_caps;
 
 pub struct PreparedPart {
     pub name: String,
@@ -28,7 +29,9 @@ pub fn prepare(
     path: &str,
     normalize: bool,
 ) -> Result<PreparedModel, Box<dyn Error>> {
-    let model = SmfModel::from_bytes(&catalog.read(path)?)?;
+    let bytes = catalog.read(path)?;
+    let mut model = SmfModel::from_bytes(&bytes)?;
+    let closed_wall_end = wall_caps::repair(path, &bytes, &mut model);
     // На карте есть исходные невидимые предметы без треугольников.
     if !normalize
         && !model
@@ -107,6 +110,11 @@ pub fn prepare(
         notes: Vec::new(),
         focus: Vec3::new(0.0, (upper.y - lower.y) * scale * 0.5, 0.0),
     };
+    if closed_wall_end {
+        result.notes.push(
+            "Closed the original concrete wall's open end with four generated triangles".into(),
+        );
+    }
     for (index, source, _) in positions {
         if source.faces.is_empty() {
             continue;
@@ -133,7 +141,19 @@ pub fn prepare(
             if !result.images.contains_key(&name) {
                 let decoded = crate::asset_mesh::image(catalog, &name);
                 match decoded {
-                    Ok(image) => {
+                    Ok(mut image) => {
+                        // Leaf cards represent solid leaves with empty space
+                        // between them. Write depth for the covered pixels so
+                        // overlapping cards sort and cast cutout shadows.
+                        if path.starts_with("models/alsctr-south")
+                            && name == "textures/shared/southtreebranch1.bmp"
+                            && image.alpha_mode == AlphaMode::Blend
+                        {
+                            image.alpha_mode = AlphaMode::Mask(0.5);
+                            result
+                                .notes
+                                .push("Leaf cards use depth-writing alpha cutouts".into());
+                        }
                         result.images.insert(name.clone(), image);
                     }
                     Err(error) => result.notes.push(format!("Текстура {name}: {error}")),

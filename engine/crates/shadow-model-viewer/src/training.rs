@@ -2,6 +2,7 @@
 use crate::{combat, fence, grenade, inventory, map_scene, orders, pickup, player, tutorial};
 use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
+    light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
     text::FontSize,
@@ -16,6 +17,7 @@ struct Config {
     screenshot: Option<PathBuf>,
     scene_json: Option<PathBuf>,
     camp: bool,
+    camera_orbit: Option<Orbit>,
     player: bool,
     player_action: String,
     player_seconds: Option<f32>,
@@ -45,7 +47,7 @@ pub(crate) struct Preview {
     pub(crate) grid: Option<shadow_formats::TerrainGrid>,
     pub(crate) playable: bool,
 }
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub(crate) struct Orbit {
     pub(crate) target: Vec3,
     pub(crate) yaw: f32,
@@ -376,7 +378,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             return Ok(());
         }
     }
-    let orbit = if config.camp {
+    let orbit = if let Some(orbit) = config.camera_orbit.clone() {
+        orbit
+    } else if config.camp {
         camp_view()
     } else if let Some(actor) = &actor {
         player_view(actor.camera_target())
@@ -678,6 +682,9 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         println!(
             "shadow-map-viewer --tutorial-smoke-json FILE.json | --combat-smoke-json FILE.json | --bda-smoke-json FILE.json | --grenade-smoke-json FILE.json | --fence-smoke-json FILE.json | --smg-smoke-json FILE.json | --medical-smoke-json FILE.json | --armor-smoke-json FILE.json | --vehicle-smoke-json FILE.json | --gate-smoke-json FILE.json | --jack-smoke-json FILE.json | --evacuation-smoke-json FILE.json | --selection-smoke-json FILE.json [--window 1280x720] [--language ru|en] --game-dir PATH [--overrides PATH] [--map NAME.mtf] [--terrain NAME] [--camera overview|camp] [--player on|off] [--player-action idle|walk|run|wave|pickup|stab|shoot|grenade|fence|smg|medical|armor|vehicle --player-seconds SECONDS] [--player-json FILE.json] [--scene-json FILE.json] [--screenshot FILE.png]\nБоец: ЛКМ — выбор/идти; двойной ЛКМ — бег; ПКМ — снять выбор, удержание — камера; H — остановить; T — слежение; Numpad — камера; Ctrl+P — пауза; Esc — учебная пауза; Ctrl+X — выход. Учебные: Home — начало, [ / ] — кадр. Просмотр карты: WASD — камера, ЛКМ/стрелки — вращение, C — площадка, Esc — выход."
         );
+        println!(
+            "Render diagnostics: --camera-orbit X,Y,Z,YAW,PITCH,DISTANCE reproduces a fixed camera pose; combine with --screenshot FILE.png."
+        );
         return Ok(None);
     }
     let mut config = Config {
@@ -688,6 +695,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         screenshot: None,
         scene_json: None,
         camp: false,
+        camera_orbit: None,
         player: false,
         player_action: "idle".into(),
         player_seconds: None,
@@ -828,6 +836,27 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                     _ => return Err("--camera должен быть overview или camp".into()),
                 }
             }
+            "--camera-orbit" => {
+                let values = value
+                    .split(',')
+                    .map(str::parse::<f32>)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let [x, y, z, yaw, pitch, distance] = values.as_slice() else {
+                    return Err("--camera-orbit requires X,Y,Z,YAW,PITCH,DISTANCE".into());
+                };
+                if !values.iter().all(|v| v.is_finite())
+                    || !(0.08..=1.5).contains(pitch)
+                    || !(0.1..=10000.0).contains(distance)
+                {
+                    return Err("invalid camera orbit: finite values, pitch 0.08..1.5 and distance 0.1..10000 required".into());
+                }
+                config.camera_orbit = Some(Orbit {
+                    target: Vec3::new(*x, *y, *z),
+                    yaw: *yaw,
+                    pitch: *pitch,
+                    distance: *distance,
+                });
+            }
             _ => return Err(format!("неизвестный аргумент {key}").into()),
         }
     }
@@ -943,10 +972,19 @@ pub(crate) fn setup(
         DirectionalLight {
             illuminance: 6500.0,
             color: scene.daylight.color,
+            shadow_maps_enabled: true,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: 2,
+            first_cascade_far_bound: 20.0,
+            maximum_distance: 100.0,
+            ..default()
+        }
+        .build(),
         Transform::from_rotation(scene.daylight.rotation),
     ));
+    commands.insert_resource(DirectionalLightShadowMap { size: 1024 });
     preview.grid = Some(scene.grid);
     let root = commands
         .spawn((

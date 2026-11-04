@@ -122,11 +122,7 @@ pub(crate) fn prepare(actor: &mut crate::player::Player, world: &World<'_>) {
     actor.route.goal = Some(goal);
     actor.route.height = world.height;
     actor.route.revision = revision;
-    let ext = Vec2::new(
-        (world.grid.config.width - 1) as f32,
-        (world.grid.config.height - 1) as f32,
-    ) * world.grid.config.edge
-        * crate::map_scene::WORLD_SCALE;
+    let ext = Vec2::from_array(world.grid.extent()) * crate::map_scene::WORLD_SCALE;
     let points = world
         .free(goal)
         .then(|| {

@@ -357,11 +357,7 @@ impl Player {
             self.gesture = true;
         }
         if action == "walk" || action == "run" {
-            let point = Vec3::new(
-                self.position.x,
-                0.0,
-                -((grid.config.height - 1) as f32) * grid.config.edge * WORLD_SCALE,
-            );
+            let point = Vec3::new(self.position.x, 0.0, -grid.extent()[1] * WORLD_SCALE);
             self.order(grid, point, action == "run");
         }
     }
@@ -509,12 +505,8 @@ impl Player {
             horizontal
         };
         let mut next = self.position + horizontal;
-        next.x = next
-            .x
-            .clamp(0.0, (c.width - 1) as f32 * c.edge * WORLD_SCALE);
-        next.z = next
-            .z
-            .clamp(-((c.height - 1) as f32) * c.edge * WORLD_SCALE, 0.0);
+        next.x = next.x.clamp(0.0, c.width as f32 * c.edge * WORLD_SCALE);
+        next.z = next.z.clamp(-(c.height as f32) * c.edge * WORLD_SCALE, 0.0);
         if let Some(height) = surface(grid, next) {
             next.y = height;
             self.position = next;

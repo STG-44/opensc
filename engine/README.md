@@ -4,7 +4,7 @@ The **Rust + Bevy** runtime for OpenSC loads the player's original Shadow
 Company: Left for Dead resources and optional replacement assets.
 
 [Project](../README.md) · [Contributing](../CONTRIBUTING.md) ·
-[Tactical systems](docs/TACTICAL-SYSTEMS.md) · [Русский](README.ru.md)
+[Tactical systems](docs/TACTICAL-SYSTEMS.md) · [World rendering](docs/RENDERING.md) · [Русский](README.ru.md)
 
 The current gameplay development branch is
 [`codex/original-inventory`](https://github.com/STG-44/opensc/tree/codex/original-inventory)
