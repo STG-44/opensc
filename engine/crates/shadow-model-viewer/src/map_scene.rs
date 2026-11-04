@@ -18,6 +18,7 @@ pub struct MapScene {
     pub terrain: Mesh,
     pub texture: Image,
     pub grid: TerrainGrid,
+    pub daylight: crate::daylight::Daylight,
     pub actors: Vec<shadow_formats::MtfObject>,
     pub focus: Vec3,
     pub span: f32,
@@ -30,6 +31,7 @@ pub fn prepare(
     terrain_name: &str,
 ) -> Result<MapScene, Box<dyn Error>> {
     let map = MtfMap::from_bytes(&catalog.read(path)?)?;
+    let daylight = crate::daylight::Daylight::prepare(catalog, path, &map.globals)?;
     let mapping = format!("textures/terrain/{terrain_name}/terrain_mapping.txt");
     let config = TerrainConfig::from_bytes(&catalog.read(&mapping)?)?;
     let height_path = format!("maps/{}.pcx", config.name);
@@ -140,7 +142,7 @@ pub fn prepare(
             "fractional_pixels":pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 0 && p[3] < 255).count(),
             "opaque_pixels":pixels.as_chunks::<4>().0.iter().filter(|p| p[3] == 255).count()})
     }).collect::<Vec<_>>() })).collect::<Vec<_>>();
-    let report = serde_json::json!({"map":path,"objects_total":map.objects.len(),"static_instances":instances.len(),"soldiers_deferred":soldiers,"unresolved_objects":unresolved,"models":mesh_info,
+    let report = serde_json::json!({"daylight":daylight.source.clone(),"map":path,"objects_total":map.objects.len(),"static_instances":instances.len(),"soldiers_deferred":soldiers,"unresolved_objects":unresolved,"models":mesh_info,
         "instances":instances.iter().map(|o|serde_json::json!({"name":o.name,"path":o.path,"translation":o.transform.translation.to_array(),"rotation_xyzw":o.transform.rotation.to_array()})).collect::<Vec<_>>(),
         "terrain":{"mapping":mapping,"heightmap":height_path,"texture":texture_path,"samples":[c.width,c.height],"vertices":grid.heights.len(),"triangles":(c.width-1)*(c.height-1)*2,"edge_source":c.edge,"height_step":c.height_step,"height_range_source":[min_height,max_height],"water_index":c.water_index,"object_positions_at_surface":sample_matches,"object_positions_sampled":sample_count},
         "world_scale":WORLD_SCALE,"mission_logic":false,"water_rendered":false,"native_lod_switching":false});
@@ -150,6 +152,7 @@ pub fn prepare(
         terrain,
         texture,
         grid,
+        daylight,
         actors: map
             .objects
             .into_iter()

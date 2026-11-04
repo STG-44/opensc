@@ -94,6 +94,27 @@ Sound currently propagates by distance without wall/material attenuation. Guard
 investigation routes, pursuit, return fire and full original AI are not implemented.
 The guard's turn is a first reaction, not a complete combat behavior model.
 
+## Initial mission sunlight
+
+`daylight.rs` reads `GAME_STATE_TIME_OF_DAY` from the MTF and finds the campaign
+whose `SPECIFY_MTF` names that map. The six `TOD_DATA_SUN_*` rows supply 24 hourly
+samples of sunlight direction and RGB color. Samples interpolate between adjacent
+hours and wrap from 23:00 to midnight. Source Z-up directions use the same basis
+conversion as map geometry. A rotation from the light's negative Z axis also
+handles vertical noon sunlight without an undefined look-at transform.
+
+Both the directional and ambient lights use the sampled source color. The
+existing Bevy intensity scales (6500 lux and ambient brightness 500) are retained;
+this is a modern rendering adaptation, not verified original photometry. Source
+RGB values are interpreted as linear light colors. Maps without a matching
+campaign retain the previous neutral light and report that fallback. Invalid,
+incomplete or ambiguous source tables produce a loading error.
+
+Only the initial map time is sampled. Continuous time progression, sky layers,
+fog tables, dynamic local lights, night vision and lighting-dependent perception
+remain unimplemented. Color/direction changes therefore do not change enemy
+visibility yet.
+
 ## Ground navigation
 
 `navigation.rs` plans ground routes for John and recruited Jack. The public
@@ -138,3 +159,17 @@ fixture, verifies hidden enemy models and unchanged fog, guard turning, the rada
 noise outline, pause/expiry/reset, and footsteps from an actual animation-driven
 running order. This is a native Linux regression; it does not replace interactive
 Windows/macOS checks or verification against the original executable.
+
+## HUD alignment validation
+
+The clock text is centered in its original window using a separate layout
+container. It stays on one line and reduces its font size when long mission
+times exceed the window width. Portrait weapon/secondary icons retain their
+aspect ratio and share the inventory icon fitting code. Original command
+button atlas frames retain their authored positions.
+
+`--hud-smoke-json FILE.json` inspects actual laid-out UI bounds at HD, Full HD
+and 21:9, including 00:00, 01:05, 99:59, 100:00 and 1440:00. It checks all 16
+command icons, two portrait equipment icons, seven inventory item kinds and
+the previous/next/skills controls, and captures the rendered panels. The
+inventory states and clock values are seeded by the harness.

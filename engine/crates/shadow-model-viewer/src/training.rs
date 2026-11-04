@@ -924,6 +924,7 @@ pub(crate) fn setup(
     ),
 ) {
     let (vehicle, gate) = dynamic;
+    let scene = preview.scene.take().expect("startup runs once");
     let camera = commands
         .spawn((
             Camera3d::default(),
@@ -931,6 +932,7 @@ pub(crate) fn setup(
             player::SceneEntity,
             AmbientLight {
                 brightness: 500.0,
+                color: scene.daylight.color,
                 ..default()
             },
             Transform::default(),
@@ -940,11 +942,11 @@ pub(crate) fn setup(
         player::SceneEntity,
         DirectionalLight {
             illuminance: 6500.0,
+            color: scene.daylight.color,
             ..default()
         },
-        Transform::from_xyz(40.0, 70.0, -50.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_rotation(scene.daylight.rotation),
     ));
-    let scene = preview.scene.take().expect("startup runs once");
     preview.grid = Some(scene.grid);
     let root = commands
         .spawn((

@@ -79,6 +79,8 @@ pub(crate) enum Piece {
 }
 #[derive(Component)]
 pub(crate) struct CommandButton(pub String);
+#[derive(Component)]
+pub(crate) struct ClockText;
 impl Hud {
     pub fn prepare(catalog: &AssetCatalog) -> Result<Self, Box<dyn Error>> {
         let lines = config_lines(&catalog.read(DEFINITION)?)?;
@@ -342,24 +344,45 @@ pub fn setup(
     if let Some(a) = &mut h.inventory {
         a.setup(&mut images, font.clone());
     }
-    for (piece, color) in [
-        (Piece::Clock, Color::srgb(0.9, 0.65, 0.12)),
-        (Piece::Tooltip, Color::srgb(0.85, 0.85, 0.7)),
-    ] {
-        commands.spawn((
-            piece,
-            Text::default(),
-            TextFont {
-                font: font.clone().into(),
-                font_size: FontSize::Px(13.0 * h.fit.scale),
-                ..default()
-            },
-            TextColor(color),
+    let clock = commands
+        .spawn((
+            Piece::Clock,
             Node::default(),
             Pickable::IGNORE,
             ChildOf(root),
-        ));
-    }
+        ))
+        .id();
+    commands.spawn((
+        ClockText,
+        Text::default(),
+        TextLayout::no_wrap().with_justify(Justify::Center),
+        bevy::text::LineHeight::RelativeToFont(1.0),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(12.0 * h.fit.scale),
+            ..default()
+        },
+        TextColor(Color::srgb(0.9, 0.65, 0.12)),
+        Node {
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Pickable::IGNORE,
+        ChildOf(clock),
+    ));
+    commands.spawn((
+        Piece::Tooltip,
+        Text::default(),
+        TextFont {
+            font: font.into(),
+            font_size: FontSize::Px(13.0 * h.fit.scale),
+            ..default()
+        },
+        TextColor(Color::srgb(0.85, 0.85, 0.7)),
+        Node::default(),
+        Pickable::IGNORE,
+        ChildOf(root),
+    ));
 }
 #[allow(clippy::too_many_arguments)]
 pub fn input(
@@ -498,6 +521,10 @@ pub fn visuals(
     mut images: ResMut<Assets<Image>>,
     buttons: Query<(&CommandButton, &ButtonVisualState)>,
     mut roots: Query<&mut Node, (With<Root>, Without<Piece>)>,
+    mut clock_text: Query<
+        (&mut Text, &mut TextFont, &bevy::text::TextLayoutInfo),
+        (With<ClockText>, Without<Piece>),
+    >,
     mut pieces: Query<
         (
             &Piece,
@@ -521,7 +548,8 @@ pub fn visuals(
             .or_insert_with(|| visibility.source.clone());
     }
     let screen = Vec2::new(window.width(), window.height());
-    if screen != h.fit.screen {
+    let resized = screen != h.fit.screen;
+    if resized {
         h.fit = Fit::new(screen);
         h.layout = hud_layout::parse(&h.lines, screen / h.fit.scale).expect("validated HD HUD");
     }
@@ -607,6 +635,21 @@ pub fn visuals(
             &mut images,
         );
     }
+    let seconds = t.clock as u32;
+    let value = format!("{:02}:{:02}", seconds / 60, seconds % 60);
+    for (mut text, mut font, layout) in &mut clock_text {
+        let changed_width = text.0.len() != value.len() || resized;
+        text.set_if_neq(Text::new(&value));
+        if changed_width {
+            font.font_size = FontSize::Px(12.0 * fit.scale);
+        } else if let FontSize::Px(size) = font.font_size {
+            let width = layout.size.x / layout.scale_factor;
+            let available = h.layout.advice("r_clock").rect.width() * fit.scale;
+            if width > available + 0.1 {
+                font.font_size = FontSize::Px(size * available / width);
+            }
+        }
+    }
     for (piece, mut node, image, text, font) in &mut pieces {
         let hide_in_inventory = inv.open
             && match *piece {
@@ -667,13 +710,9 @@ pub fn visuals(
             }
             Piece::Clock => {
                 *node = fit.node(h.layout.advice("r_clock").rect);
-                if let Some(mut text) = text {
-                    let s = t.clock as u32;
-                    **text = format!("{:02}:{:02}", s / 60, s % 60);
-                }
-                if let Some(mut font) = font {
-                    font.font_size = FontSize::Px(12.0 * fit.scale);
-                }
+                node.align_items = AlignItems::Center;
+                node.justify_content = JustifyContent::Center;
+                node.overflow = Overflow::clip();
             }
             Piece::Tooltip => {
                 *node = fit.node(Rect::new(

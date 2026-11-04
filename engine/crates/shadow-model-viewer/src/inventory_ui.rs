@@ -262,6 +262,12 @@ impl Appearance {
         )
         .with_mode(NodeImageMode::Stretch)
     }
+    pub(crate) fn icon_rect(&self, item: Item, slot: Rect, padding: f32) -> Rect {
+        let size = self.icons[&item].bitmap.size;
+        let scale =
+            ((slot.size() - Vec2::splat(padding * 2.0)).max(Vec2::ZERO) / size).min_element();
+        Rect::from_center_size(slot.center(), size * scale)
+    }
     fn texture(&self, name: &str, rect: Rect, canvas: Vec2) -> ImageNode {
         let b = &self.textures[name];
         ImageNode::new(b.handle.clone().expect("inventory texture uploaded"))
@@ -278,7 +284,7 @@ pub(crate) struct Hover(String);
 pub(crate) struct Hint;
 #[derive(Component)]
 #[allow(dead_code)] // Read by the shadow-game UI smoke; the map viewer shares this renderer.
-pub(crate) struct ItemImage(pub Item);
+pub(crate) struct ItemImage(pub Item, pub Rect);
 #[allow(clippy::too_many_arguments)]
 fn text(
     commands: &mut Commands,
@@ -325,11 +331,9 @@ fn button(
         .id()
 }
 fn icon(commands: &mut Commands, parent: Entity, a: &Appearance, fit: Fit, rect: Rect, item: Item) {
-    let size = a.icons[&item].bitmap.size;
-    let scale = ((rect.size() - Vec2::splat(6.0)) / size).min_element();
-    let r = Rect::from_center_size(rect.center(), size * scale);
+    let r = a.icon_rect(item, rect, 3.0);
     commands.spawn((
-        ItemImage(item),
+        ItemImage(item, rect),
         a.icon(item),
         fit.node(r),
         Pickable::IGNORE,

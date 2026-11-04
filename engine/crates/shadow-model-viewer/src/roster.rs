@@ -26,7 +26,7 @@ pub(crate) struct Panel;
 #[derive(Component)]
 pub(crate) struct Caption(pub u8, pub bool);
 #[derive(Component)]
-pub(crate) struct WeaponPicture(u8, bool);
+pub(crate) struct WeaponPicture(pub u8, pub bool);
 #[derive(Component)]
 pub(crate) struct Health(u8);
 #[derive(Debug)]
@@ -525,6 +525,10 @@ pub fn visuals(
             inv.weapon(&john).map(crate::inventory_ui::Item::weapon)
         };
         if let (Some(item), Some(a)) = (item, h.inventory.as_ref()) {
+            let top = h.layout.face.height() + if picture.1 { 17.0 } else { 3.0 };
+            *node = h
+                .fit
+                .node(a.icon_rect(item, Rect::new(0.0, top, 16.0, top + 13.0), 0.0));
             *image = a.icon(item);
         } else {
             node.display = Display::None;

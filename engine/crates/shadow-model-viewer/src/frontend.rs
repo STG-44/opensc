@@ -19,6 +19,8 @@ use std::{collections::HashSet, error::Error, path::PathBuf, sync::Arc, time::Du
 
 #[path = "hearing_smoke.rs"]
 mod hearing_smoke;
+#[path = "hud_smoke.rs"]
+mod hud_smoke;
 #[path = "input_smoke.rs"]
 mod input_smoke;
 #[path = "localization_smoke.rs"]
@@ -200,6 +202,7 @@ struct Config {
     input_smoke: Option<PathBuf>,
     radar_smoke: Option<PathBuf>,
     hearing_smoke: Option<PathBuf>,
+    hud_smoke: Option<PathBuf>,
 }
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
@@ -499,6 +502,13 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         app.insert_resource(input_smoke::Smoke::new(path))
             .add_systems(Last, input_smoke::run);
     }
+    if let Some(path) = config.hud_smoke {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        app.insert_resource(hud_smoke::Smoke::new(path))
+            .add_systems(Last, hud_smoke::run);
+    }
     if let Some(path) = config.hearing_smoke {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -703,7 +713,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "shadow-game --game-dir PATH [--overrides PATH] [--settings FILE.json] [--language CODE] [--window WIDTHxHEIGHT] [--screen main|options|new-game|load-game|multiplayer|quit|training|pause|movie --screenshot FILE.png] [--frame 1..5] [--menu-time SECONDS --menu-hover b_training:0..1 --screenshot FILE.png] [--menu-json FILE.json] [--smoke-json FILE.json] [--locale-smoke-json FILE.json]\nВидео: --movie movies/intro.avi; --movie-json FILE.json — сведения, PCM hash и три PNG; --movie-time SECONDS --screenshot FILE.png — неподвижный снимок; --movie-smoke-json FILE.json — пропуск, повтор и окончание короткого ролика.\nРазрешения от HD (1280x720), включая 16:9 и 21:9. Мышь или ↑/↓/Tab и Enter. Esc — назад/меню паузы, Ctrl+X — выход. Ролик: Esc/Enter/пробел/левая кнопка — пропустить. --player on сохраняет прямой запуск прежней учебной витрины."
         );
         println!(
-            "Native checks: --input-smoke-json FILE.json or --radar-smoke-json FILE.json or --hearing-smoke-json FILE.json; each requires --screen main and an isolated --settings FILE.json."
+            "Native checks: --input-smoke-json FILE.json or --radar-smoke-json FILE.json or --hearing-smoke-json FILE.json or --hud-smoke-json FILE.json; each requires --screen main and an isolated --settings FILE.json."
         );
         return Ok(None);
     }
@@ -731,6 +741,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         input_smoke: None,
         radar_smoke: None,
         hearing_smoke: None,
+        hud_smoke: None,
     };
     let mut seen = HashSet::new();
     for pair in args.chunks(2) {
@@ -755,6 +766,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--smoke-json" => config.smoke = Some(value.into()),
             "--locale-smoke-json" => config.locale_smoke = Some(value.into()),
             "--input-smoke-json" => config.input_smoke = Some(value.into()),
+            "--hud-smoke-json" => config.hud_smoke = Some(value.into()),
             "--hearing-smoke-json" => config.hearing_smoke = Some(value.into()),
             "--radar-smoke-json" => config.radar_smoke = Some(value.into()),
             "--movie" => config.movie = Some(shadow_formats::normalize_path(value)?),
@@ -872,6 +884,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         + usize::from(config.evacuation_smoke.is_some())
         + usize::from(config.locale_smoke.is_some())
         + usize::from(config.input_smoke.is_some())
+        + usize::from(config.hud_smoke.is_some())
         + usize::from(config.hearing_smoke.is_some())
         + usize::from(config.radar_smoke.is_some())
         > 1
@@ -880,7 +893,8 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     }
     if (config.input_smoke.is_some()
         || config.radar_smoke.is_some()
-        || config.hearing_smoke.is_some())
+        || config.hearing_smoke.is_some()
+        || config.hud_smoke.is_some())
         && (!seen.contains("--settings") || config.screen != Screen::Main)
     {
         return Err("native smoke checks require --screen main and isolated --settings".into());

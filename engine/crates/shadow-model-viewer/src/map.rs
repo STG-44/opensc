@@ -3,6 +3,7 @@ mod armor;
 mod asset_mesh;
 mod body_carry;
 mod combat;
+mod daylight;
 mod evacuation;
 mod fence;
 mod gate;
