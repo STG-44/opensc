@@ -6,6 +6,7 @@ mod visual_pack;
 mod visual_surface;
 mod wall_caps;
 
+#[allow(dead_code)] // Shared scene module also builds standalone model browsers.
 pub(crate) fn open_game_catalog(
     game: &std::path::Path,
     overrides: Option<&std::path::Path>,
