@@ -9,6 +9,7 @@ use crate::{
 use bevy::{mesh::VertexAttributeValues, prelude::*};
 use shadow_formats::{AssetCatalog, BmfMotion, CampaignEventType, config_lines};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
     sync::OnceLock,
@@ -20,6 +21,7 @@ pub struct MapObject(pub [i32; 2]);
 pub struct EquippedPart(pub String);
 #[derive(Component)]
 pub struct ItemRing;
+#[derive(Clone)]
 struct Geometry {
     part: String,
     id: [i32; 2],
@@ -27,14 +29,57 @@ struct Geometry {
     solid: bool,
     triangles: Vec<[Vec3; 3]>,
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Spatial {
     bins: HashMap<IVec2, Vec<(usize, usize)>>,
     global: Vec<(usize, usize)>,
+    offsets: Vec<usize>,
+}
+
+#[derive(Default)]
+struct RayScratch {
+    marks: Vec<u32>,
+    epoch: u32,
+}
+thread_local! { static RAY_SCRATCH: RefCell<RayScratch> = RefCell::default(); }
+
+/// Immutable visibility data owned by a background fog scan. Moving objects
+/// invalidate the live index without changing a scan already in progress.
+pub(crate) struct SightSnapshot {
+    geometry: Vec<Geometry>,
+    spatial: Spatial,
+}
+impl SightSnapshot {
+    pub fn line_of_sight(&self, from: Vec3, to: Vec3) -> bool {
+        sight_clear(&self.geometry, &self.spatial, from, to)
+    }
+}
+
+fn sight_clear(geometry: &[Geometry], spatial: &Spatial, from: Vec3, to: Vec3) -> bool {
+    let distance = from.distance(to);
+    if !distance.is_finite() {
+        return false;
+    }
+    if distance < 1e-6 {
+        return true;
+    }
+    let direction = (to - from) / distance;
+    !spatial.any_ray(from, to, |(g, t)| {
+        let g = &geometry[g];
+        g.solid
+            && g.opaque
+            && ray_triangle(from, direction, g.triangles[t]).is_some_and(|d| d < distance - 0.02)
+    })
 }
 impl Spatial {
     fn new(geometry: &[Geometry]) -> Self {
         let mut index = Self::default();
+        index.offsets.push(0);
+        for g in geometry {
+            index
+                .offsets
+                .push(index.offsets.last().copied().unwrap() + g.triangles.len());
+        }
         for (g, geometry) in geometry.iter().enumerate() {
             if !geometry.solid && !geometry.opaque {
                 continue;
@@ -58,6 +103,53 @@ impl Spatial {
             }
         }
         index
+    }
+    /// Boolean rays can stop at the first occluder. Reuse per-thread stamps
+    /// instead of allocating and filling a HashSet for every fog cell.
+    fn any_ray(&self, from: Vec3, to: Vec3, mut hit: impl FnMut((usize, usize)) -> bool) -> bool {
+        RAY_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            let count = self.offsets.last().copied().unwrap_or(0);
+            scratch.marks.resize(count, 0);
+            scratch.epoch = scratch.epoch.wrapping_add(1);
+            if scratch.epoch == 0 {
+                scratch.marks.fill(0);
+                scratch.epoch = 1;
+            }
+            let epoch = scratch.epoch;
+            let mut check = |entry: (usize, usize)| {
+                let id = self.offsets[entry.0] + entry.1;
+                if scratch.marks[id] == epoch {
+                    return false;
+                }
+                scratch.marks[id] = epoch;
+                hit(entry)
+            };
+            if self.global.iter().copied().any(&mut check) {
+                return true;
+            }
+            let a = Vec2::new(from.x, from.z) / 4.;
+            let b = Vec2::new(to.x, to.z) / 4.;
+            let steps = ((b - a).abs().max_element() * 2.).ceil().max(1.) as usize;
+            if steps > 4096 {
+                return self.bins.values().flatten().copied().any(check);
+            }
+            for i in 0..=steps {
+                let p = a.lerp(b, i as f32 / steps as f32).floor().as_ivec2();
+                for y in -1..=1 {
+                    for x in -1..=1 {
+                        if self
+                            .bins
+                            .get(&(p + IVec2::new(x, y)))
+                            .is_some_and(|bin| bin.iter().copied().any(&mut check))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        })
     }
     fn candidates(&self, from: Vec3, to: Vec3) -> HashSet<(usize, usize)> {
         let a = Vec2::new(from.x, from.z) / 4.0;
@@ -202,7 +294,7 @@ impl Pickup {
         let mut upper = Vec3::splat(f32::NEG_INFINITY);
         for instance in &scene.instances {
             let world = Mat4::from_scale(Vec3::splat(WORLD_SCALE)) * instance.transform.to_matrix();
-            for part in &scene.models[&instance.path].parts {
+            for part in scene.models[&instance.path].interaction_parts() {
                 let Some(VertexAttributeValues::Float32x3(vertices)) =
                     part.mesh.attribute(Mesh::ATTRIBUTE_POSITION)
                 else {
@@ -301,16 +393,20 @@ impl Pickup {
         }
         let direction = difference / distance;
         !self
-            .geometry
-            .iter()
-            .filter(|g| g.id != self.id && Some(g.id) != selected && g.opaque)
-            .flat_map(|g| &g.triangles)
-            .any(|t| ray_triangle(origin, direction, *t).is_some_and(|d| d < distance - 0.02))
+            .spatial
+            .get_or_init(|| Spatial::new(&self.geometry))
+            .any_ray(origin, target, |(g, t)| {
+                let g = &self.geometry[g];
+                g.id != self.id
+                    && Some(g.id) != selected
+                    && g.opaque
+                    && ray_triangle(origin, direction, g.triangles[t])
+                        .is_some_and(|d| d < distance - 0.02)
+            })
     }
     /// Перемещаем исходные треугольники машины вместе с видимой моделью.
     pub fn move_object(&mut self, id: [i32; 2], delta: Mat4) {
-        self.spatial.take();
-        self.revision = self.revision.wrapping_add(1);
+        self.invalidate_geometry();
         for g in self.geometry.iter_mut().filter(|g| g.id == id) {
             for triangle in &mut g.triangles {
                 *triangle = triangle.map(|p| delta.transform_point3(p));
@@ -319,8 +415,7 @@ impl Pickup {
     }
     /// Перемещаем выбранную часть, оставляя раму того же MTF-объекта на месте.
     pub fn move_parts(&mut self, id: [i32; 2], parts: &[String], delta: Mat4) {
-        self.spatial.take();
-        self.revision = self.revision.wrapping_add(1);
+        self.invalidate_geometry();
         for g in self
             .geometry
             .iter_mut()
@@ -331,6 +426,10 @@ impl Pickup {
             }
         }
     }
+    fn invalidate_geometry(&mut self) {
+        self.spatial.take();
+        self.revision = self.revision.wrapping_add(1);
+    }
     pub fn guard_movement(
         &self,
         actor: &mut player::Player,
@@ -338,14 +437,17 @@ impl Pickup {
         grid: &shadow_formats::TerrainGrid,
         ignored: impl Fn([i32; 2]) -> bool,
     ) {
+        let to = actor.position;
+        if Vec2::new(to.x - previous.x, to.z - previous.z).length_squared() < 1e-10 {
+            return;
+        }
         crate::obstacles::guard(
             actor,
             previous,
             grid,
-            self.geometry
-                .iter()
-                .filter(|g| g.solid && !ignored(g.id))
-                .flat_map(|g| g.triangles.iter().copied()),
+            self.nearby(previous, to)
+                .filter(|(g, _)| g.solid && !ignored(g.id))
+                .map(|(_, triangle)| triangle),
         );
     }
     pub fn revision(&self) -> u64 {
@@ -358,6 +460,9 @@ impl Pickup {
             .into_iter()
             .map(|(g, t)| (&self.geometry[g], self.geometry[g].triangles[t]))
     }
+    // The interactive game smoke checks the nearest collision; the map viewer
+    // only needs boolean clearance queries.
+    #[allow(dead_code)]
     pub fn movement_hit(
         &self,
         from: Vec3,
@@ -375,28 +480,48 @@ impl Pickup {
         )
     }
     pub fn occupied(&self, point: Vec3, height: f32, ignored: impl Fn([i32; 2]) -> bool) -> bool {
-        crate::obstacles::occupied(
-            point,
-            height,
-            self.nearby(point, point)
-                .filter(|(g, _)| g.solid && !ignored(g.id))
-                .map(|(_, t)| t),
-        )
+        self.spatial
+            .get_or_init(|| Spatial::new(&self.geometry))
+            .any_ray(point, point, |(g, t)| {
+                let g = &self.geometry[g];
+                g.solid
+                    && !ignored(g.id)
+                    && crate::obstacles::occupied(point, height, std::iter::once(g.triangles[t]))
+            })
+    }
+    pub(crate) fn movement_blocked(
+        &self,
+        from: Vec3,
+        to: Vec3,
+        height: f32,
+        ignored: impl Fn([i32; 2]) -> bool,
+    ) -> bool {
+        self.spatial
+            .get_or_init(|| Spatial::new(&self.geometry))
+            .any_ray(from, to, |(g, t)| {
+                let g = &self.geometry[g];
+                g.solid
+                    && !ignored(g.id)
+                    && crate::obstacles::sweep(from, to, height, std::iter::once(g.triangles[t]))
+                        .is_some()
+            })
     }
     pub fn line_of_sight(&self, origin: Vec3, target: Vec3) -> bool {
-        let distance = origin.distance(target);
-        if !distance.is_finite() {
-            return false;
+        sight_clear(
+            &self.geometry,
+            self.spatial.get_or_init(|| Spatial::new(&self.geometry)),
+            origin,
+            target,
+        )
+    }
+    pub(crate) fn sight_snapshot(&self) -> SightSnapshot {
+        SightSnapshot {
+            geometry: self.geometry.clone(),
+            spatial: self
+                .spatial
+                .get_or_init(|| Spatial::new(&self.geometry))
+                .clone(),
         }
-        if distance < 1e-6 {
-            return true;
-        }
-        let direction = (target - origin) / distance;
-        !self.nearby(origin, target).any(|(g, t)| {
-            g.solid
-                && g.opaque
-                && ray_triangle(origin, direction, t).is_some_and(|d| d < distance - 0.02)
-        })
     }
     pub fn segment_hit(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
         let delta = to - from;
@@ -1805,6 +1930,7 @@ pub(crate) mod tests {
         assert!(ray_triangle(Vec3::ZERO, Vec3::ZERO, triangle).is_none());
     }
     pub(crate) fn add_wall(p: &mut Pickup) {
+        p.invalidate_geometry();
         p.geometry.push(Geometry {
             part: String::new(),
             id: [9, 9],
@@ -1823,6 +1949,74 @@ pub(crate) mod tests {
                 ],
             ],
         });
+    }
+    #[test]
+    fn visibility_snapshot_is_immutable_while_live_geometry_moves() {
+        let (mut item, _, _, _) = fixture();
+        add_wall(&mut item);
+        let a = Vec3::new(0.5, 2., -0.5);
+        let b = Vec3::new(1.5, 2., -0.5);
+        let snapshot = item.sight_snapshot();
+        assert!(!snapshot.line_of_sight(a, b));
+        item.move_object([9, 9], Mat4::from_translation(Vec3::X * 10.));
+        assert!(item.line_of_sight(a, b));
+        assert!(!snapshot.line_of_sight(a, b));
+    }
+    #[test]
+    fn indexed_boolean_rays_match_brute_force_in_both_directions() {
+        let (mut item, _, _, _) = fixture();
+        add_wall(&mut item);
+        for z in [-4., -1.9, -0.5, 0.9, 3.] {
+            for reverse in [false, true] {
+                let mut a = Vec3::new(-8., 2., z);
+                let mut b = Vec3::new(8., 2., z);
+                if reverse {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                let length = a.distance(b);
+                let direction = (b - a) / length;
+                let expected = !item
+                    .geometry
+                    .iter()
+                    .filter(|g| g.solid && g.opaque)
+                    .flat_map(|g| &g.triangles)
+                    .any(|t| ray_triangle(a, direction, *t).is_some_and(|d| d < length - 0.02));
+                assert_eq!(item.line_of_sight(a, b), expected);
+                assert_eq!(item.sight_snapshot().line_of_sight(a, b), expected);
+            }
+        }
+    }
+    #[test]
+    fn indexed_clearance_and_occupancy_match_full_geometry() {
+        let (mut item, _, _, _) = fixture();
+        add_wall(&mut item);
+        for ignored in [false, true] {
+            for z in [-8., -2.1, -0.5, 1.1, 8.] {
+                for height in [0.4, 1.8, 6.] {
+                    let all = || {
+                        item.geometry
+                            .iter()
+                            .filter(|g| g.solid && !ignored)
+                            .flat_map(|g| g.triangles.iter().copied())
+                    };
+                    for x in [0.5, 0.8, 0.9, 1., 1.3] {
+                        let point = Vec3::new(x, 0., z);
+                        assert_eq!(
+                            item.occupied(point, height, |_| ignored),
+                            crate::obstacles::occupied(point, height, all())
+                        );
+                    }
+                    for (a, b) in [(-8., 8.), (8., -8.), (0.5, 0.6), (0.9, 0.9)] {
+                        let from = Vec3::new(a, 0., z);
+                        let to = Vec3::new(b, 0., z);
+                        assert_eq!(
+                            item.movement_blocked(from, to, height, |_| ignored),
+                            crate::obstacles::sweep(from, to, height, all()).is_some()
+                        );
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn early_cutters_in_hand_do_not_prevent_picking_up_the_training_knife() {
@@ -1856,6 +2050,7 @@ pub(crate) mod tests {
         let (origin, target) = (Vec3::Z, Vec3::NEG_Z);
         assert!(!item.clear_line(origin, target));
         assert!(item.clear_line_ignoring(origin, target, Some(tool)));
+        item.invalidate_geometry();
         item.geometry.push(Geometry {
             part: String::new(),
             id: [1, 100],

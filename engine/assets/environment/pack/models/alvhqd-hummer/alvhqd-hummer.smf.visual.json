@@ -1,0 +1,69 @@
+{
+  "render_base_parts": [
+    "hummer-back01"
+  ],
+  "source_sha256": "59bfcee4efb2f1b7ce273a6c2be6a276d9f58d56ecb4bfd83d4d72560292b13b",
+  "texture_overrides": {
+    "textures/shared/hummer.bmp": {
+      "glass_regions": [
+        [
+          0.503,
+          0.282,
+          0.589,
+          0.416
+        ],
+        [
+          0.503,
+          0.45,
+          0.589,
+          0.589
+        ],
+        [
+          0.218,
+          0.646,
+          0.313,
+          0.729
+        ],
+        [
+          0.375,
+          0.646,
+          0.465,
+          0.729
+        ]
+      ],
+      "texture": "textures/opensc-environment/hummer-body-v1.png"
+    }
+  },
+  "version": 2,
+  "visual_sha256": "c77834217848f1bc7e52855aeb156f73d187cf1f0cf23c470a9ac82e14c1235c",
+  "wipers": [
+    {
+      "axis": [
+        0.0,
+        0.9705702662467957,
+        0.24081800878047943
+      ],
+      "part": "OpenSC Hummer wiper left",
+      "pivot": [
+        -55.0,
+        283.258056640625,
+        200.5
+      ],
+      "sweep_radians": -1.2217304706573486
+    },
+    {
+      "axis": [
+        0.0,
+        0.9705702662467957,
+        0.24081800878047943
+      ],
+      "part": "OpenSC Hummer wiper right",
+      "pivot": [
+        55.0,
+        283.258056640625,
+        200.5
+      ],
+      "sweep_radians": 1.2217304706573486
+    }
+  ]
+}

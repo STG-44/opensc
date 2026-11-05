@@ -413,6 +413,7 @@ fn load_model(
     **label = Text::new(summary);
     browser.focus = prepared.focus;
     for part in prepared.parts {
+        let surface = part.surface();
         let texture = part.texture.and_then(|name| textures.get(&name).cloned());
         let material = materials.add(StandardMaterial {
             base_color: if texture.is_some() {
@@ -421,10 +422,7 @@ fn load_model(
                 Color::srgb(0.85, 0.28, 0.65)
             },
             base_color_texture: texture,
-            alpha_mode: part.alpha_mode,
-            perceptual_roughness: 0.9,
-            cull_mode: None,
-            ..default()
+            ..surface
         });
         let mesh = meshes.add(part.mesh);
         browser.meshes.push(mesh.clone());

@@ -47,6 +47,9 @@ fn main() {
         matches!(
             a.as_str(),
             "--player"
+                | "--environment-preview"
+                | "--vehicle-weather-json"
+                | "--cpu-profile-json"
                 | "--player-json"
                 | "--scene-json"
                 | "--map"

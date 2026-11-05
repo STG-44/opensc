@@ -1,0 +1,12 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-11-05",
+  "mode": "edit",
+  "prompt": "Use case: precise-object-edit. Edit this existing square game UV atlas IN PLACE, preserving the exact square canvas, every island boundary and all normalized positions/sizes. Remove ONLY the painted black windshield wiper blades and their diagonal arms from the TWO vertically stacked windshield glass panes in the narrow central strip. Those wipers will be actual animated 3D geometry; leaving their painted copies causes visible duplicates. Fill only the removed black lines with a seamless continuation of the existing blue-gray sky/cloud reflections and dark tint. Keep all glass highlights and cloud gradients as they currently are. Do not remove window rubber seals, pane frames, bolts, hinges or any door handles. Do NOT change side door windows, camouflage, doors, headlamps, grille, roof, wheels, TEOR text or unused blue/white patches. No additional wipers anywhere. No change in perspective or UV layout. Output the same square albedo UV atlas, not a car render. No watermarks or extra text.",
+  "output": "textures/hummer-body-v1.png",
+  "actual_resolution": [
+    1254,
+    1254
+  ],
+  "pixel_postprocessing": "none; copied unchanged; wipers use animated geometry instead"
+}

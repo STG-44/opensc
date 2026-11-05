@@ -4,8 +4,14 @@ import argparse
 import hashlib
 import json
 import re
+import importlib.util
 from pathlib import Path
 from urllib.parse import quote
+
+spec = importlib.util.spec_from_file_location(
+    'pack_resources', Path(__file__).parents[1] / 'engine/scripts/pack_resources.py')
+pack_resources = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pack_resources)
 
 TARGETS = {
     "linux-x86_64": "x86_64-unknown-linux-gnu",
@@ -30,6 +36,13 @@ def read_package(spec):
         raise ValueError("Unexpected engine entrypoint")
     allowed = {entrypoint, "build-info.json", "README-RU.txt", "THIRD-PARTY-NOTICES.txt",
                "docs/CONTROLS-RU.md", "docs/HUD-RU.md", "package-files.json"}
+    environment = info.get('environment_pack')
+    if environment is not None:
+        expected = str(Path(entrypoint).parent / 'environment-pack').replace('\\', '/')
+        if environment != expected:
+            raise ValueError('Unexpected bundled environment path')
+        allowed.update(environment + '/' + name
+                       for name in pack_resources.owned_pack_files(root / environment))
     found = set()
     for path in root.rglob("*"):
         if path.is_symlink():

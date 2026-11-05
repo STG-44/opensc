@@ -12,15 +12,26 @@ pub enum AssetOrigin {
     Override(PathBuf),
 }
 
-/// Порядок замены: GUT < отдельные файлы оригинала < наши улучшения.
+/// Порядок замены: GUT < файлы оригинала < пакет версии < пользовательские замены.
 #[derive(Debug)]
 pub struct AssetCatalog {
     pub archives: Vec<GutArchive>,
     assets: BTreeMap<String, AssetOrigin>,
+    base_assets: BTreeMap<String, AssetOrigin>,
 }
 
 impl AssetCatalog {
     pub fn open(game_dir: impl AsRef<Path>, overrides: Option<&Path>) -> Result<Self> {
+        Self::open_layered(game_dir, None, overrides)
+    }
+
+    /// Installed originals < versioned owned presentation pack < user overrides.
+    /// The base catalog remains the original installation for interaction proxies.
+    pub fn open_layered(
+        game_dir: impl AsRef<Path>,
+        bundled: Option<&Path>,
+        overrides: Option<&Path>,
+    ) -> Result<Self> {
         let game_dir = game_dir.as_ref();
         let data_dir = if game_dir.join("Data").is_dir() {
             game_dir.join("Data")
@@ -66,12 +77,17 @@ impl AssetCatalog {
         let mut loose = BTreeMap::new();
         index_loose(&data_dir, &data_dir, &mut loose, false, 0)?;
         assets.extend(loose);
-        if let Some(root) = overrides {
+        let base_assets = assets.clone();
+        for root in [bundled, overrides].into_iter().flatten() {
             let mut replacements = BTreeMap::new();
             index_loose(root, root, &mut replacements, true, 0)?;
             assets.extend(replacements);
         }
-        Ok(Self { archives, assets })
+        Ok(Self {
+            archives,
+            assets,
+            base_assets,
+        })
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &str> {
@@ -96,7 +112,22 @@ impl AssetCatalog {
     }
 
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
-        match self.origin(path)? {
+        self.read_origin(self.origin(path)?)
+    }
+
+    /// Read installed data before applying visual replacements. Interaction
+    /// proxies can retain the original collision and picking surfaces.
+    pub fn read_base(&self, path: &str) -> Result<Vec<u8>> {
+        let key = normalize_path(path)?;
+        self.read_origin(
+            self.base_assets
+                .get(&key)
+                .ok_or_else(|| Error::NotFound(path.into()))?,
+        )
+    }
+
+    fn read_origin(&self, origin: &AssetOrigin) -> Result<Vec<u8>> {
+        match origin {
             AssetOrigin::Archive { archive, entry } => self.archives[*archive].read_entry(*entry),
             AssetOrigin::Loose(file) | AssetOrigin::Override(file) => {
                 if fs::metadata(file)?.len() > 512 * 1024 * 1024 {

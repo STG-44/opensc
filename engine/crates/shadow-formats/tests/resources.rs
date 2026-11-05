@@ -114,6 +114,8 @@ fn loose_files_and_our_overrides_have_the_documented_priority() {
     assert_eq!(base.read("textures/hello.txt").unwrap(), b"loose");
     let improved = AssetCatalog::open(&game, Some(&overlay)).unwrap();
     assert_eq!(improved.read("TEXTURES\\HELLO.TXT").unwrap(), b"improved");
+    assert_eq!(improved.read_base("TEXTURES\\HELLO.TXT").unwrap(), b"loose");
+    assert!(improved.read_base("missing.txt").is_err());
     assert!(matches!(
         improved.origin("textures/hello.txt").unwrap(),
         AssetOrigin::Override(_)
@@ -128,6 +130,32 @@ fn loose_files_and_our_overrides_have_the_documented_priority() {
         fs::read(game.join("Data/TEXTURES/HELLO.txt")).unwrap(),
         b"loose"
     );
+}
+
+#[test]
+fn bundled_presentation_and_user_mods_preserve_original_interactions() {
+    let sandbox = Sandbox::new();
+    sandbox.write(
+        "game/Data/test.gut",
+        &fixture("textures/hello.txt", b"original"),
+    );
+    sandbox.write("bundle/textures/hello.txt", b"owned presentation");
+    sandbox.write("mods/textures/hello.txt", b"user choice");
+    let game = sandbox.0.join("game");
+    let bundle = sandbox.0.join("bundle");
+    let mods = sandbox.0.join("mods");
+    let bundled = AssetCatalog::open_layered(&game, Some(&bundle), None).unwrap();
+    assert_eq!(
+        bundled.read("textures/hello.txt").unwrap(),
+        b"owned presentation"
+    );
+    assert_eq!(
+        bundled.read_base("textures/hello.txt").unwrap(),
+        b"original"
+    );
+    let custom = AssetCatalog::open_layered(&game, Some(&bundle), Some(&mods)).unwrap();
+    assert_eq!(custom.read("textures/hello.txt").unwrap(), b"user choice");
+    assert_eq!(custom.read_base("textures/hello.txt").unwrap(), b"original");
 }
 
 #[test]

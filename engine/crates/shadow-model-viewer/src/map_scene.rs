@@ -149,7 +149,7 @@ pub fn prepare(
     }).collect::<Vec<_>>() })).collect::<Vec<_>>();
     let report = serde_json::json!({"daylight":daylight.source.clone(),"map":path,"objects_total":map.objects.len(),"static_instances":instances.len(),"soldiers_deferred":soldiers,"unresolved_objects":unresolved,"models":mesh_info,
         "instances":instances.iter().map(|o|serde_json::json!({"name":o.name,"path":o.path,"translation":o.transform.translation.to_array(),"rotation_xyzw":o.transform.rotation.to_array()})).collect::<Vec<_>>(),
-        "terrain":{"mapping":mapping,"heightmap":height_path,"texture":texture_path,"samples":[c.width,c.height],"vertices":(c.width+1)*(c.height+1),"triangles":c.width*c.height*2,"edge_source":c.edge,"extent_source":grid.extent(),"boundary_reconstruction":"clamped outer height samples; original EXE boundary sampling unverified","height_step":c.height_step,"height_range_source":[min_height,max_height],"water_index":c.water_index,"object_positions_at_surface":sample_matches,"object_positions_sampled":sample_count},
+        "terrain":{"mapping":mapping,"heightmap":height_path,"texture":texture_path,"samples":[c.width,c.height],"vertices":(c.width+3)*(c.height+3),"triangles":(c.width+2)*(c.height+2)*2,"edge_source":c.edge,"extent_source":grid.extent(),"visual_border_cells":1,"boundary_reconstruction":"clamped outer height samples and render-only border; original EXE boundary sampling unverified","height_step":c.height_step,"height_range_source":[min_height,max_height],"water_index":c.water_index,"object_positions_at_surface":sample_matches,"object_positions_sampled":sample_count},
         "world_scale":WORLD_SCALE,"mission_logic":false,"water_rendered":false,"native_lod_switching":false});
     Ok(MapScene {
         models,
@@ -170,22 +170,29 @@ pub fn prepare(
 }
 fn terrain_mesh(grid: &TerrainGrid) -> Mesh {
     let c = &grid.config;
-    let mut positions = Vec::with_capacity((c.width + 1) * (c.height + 1));
+    // Edge pillars protrude beyond the nominal atlas extent. A render-only
+    // cell supports these details without enlarging the playable map.
+    let stride = c.width + 3;
+    let mut positions = Vec::with_capacity(stride * (c.height + 3));
     let mut uv = Vec::with_capacity(positions.capacity());
-    for y in 0..=c.height {
-        for x in 0..=c.width {
-            positions.push([x as f32 * c.edge, grid.sample(x, y), -(y as f32) * c.edge]);
-            // Атлас покрывает width*edge, последний узел расположен на (width-1)*edge.
+    for y in -1..=c.height as i32 + 1 {
+        for x in -1..=c.width as i32 + 1 {
+            positions.push([
+                x as f32 * c.edge,
+                grid.sample(x.max(0) as usize, y.max(0) as usize),
+                -(y as f32) * c.edge,
+            ]);
+            // Clamp-to-edge sampling extends the atlas across the visual border.
             uv.push([x as f32 / c.width as f32, y as f32 / c.height as f32]);
         }
     }
     let mut indices = Vec::new();
-    for y in 0..c.height {
-        for x in 0..c.width {
-            let a = (y * (c.width + 1) + x) as u32;
+    for y in 0..c.height + 2 {
+        for x in 0..c.width + 2 {
+            let a = (y * stride + x) as u32;
             let b = a + 1;
-            let d = a + c.width as u32 + 2;
-            let e = a + c.width as u32 + 1;
+            let d = a + stride as u32 + 1;
+            let e = a + stride as u32;
             indices.extend([a, b, d, a, d, e]);
         }
     }
@@ -221,21 +228,24 @@ mod tests {
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("indices");
         };
-        assert_eq!(indices.len(), 24);
-        assert_eq!(&indices[..6], &[0, 1, 4, 0, 4, 3]);
-        assert_eq!(&indices[18..], &[4, 5, 8, 4, 8, 7]);
+        assert_eq!(indices.len(), 96);
+        assert_eq!(&indices[..6], &[0, 1, 6, 0, 6, 5]);
+        assert_eq!(&indices[90..], &[18, 19, 24, 18, 24, 23]);
         let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
         else {
             panic!("positions");
         };
-        assert_eq!(p[4], [200.0, 100.0, -200.0]);
-        assert_eq!(p[8], [400.0, 100.0, -400.0]);
+        assert_eq!(p[12], [200.0, 100.0, -200.0]);
+        assert_eq!(p[18], [400.0, 100.0, -400.0]);
+        assert_eq!(p[24], [600.0, 100.0, -600.0]);
+        assert!(grid.height_at(600.0, 600.0).is_none()); // visual border only
         let Some(VertexAttributeValues::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0)
         else {
             panic!("uv");
         };
-        assert_eq!(uv[4], [0.5, 0.5]);
-        assert_eq!(uv[8], [1.0, 1.0]);
+        assert_eq!(uv[12], [0.5, 0.5]);
+        assert_eq!(uv[18], [1.0, 1.0]);
+        assert_eq!(uv[24], [1.5, 1.5]);
         let Some(VertexAttributeValues::Float32x3(n)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {
             panic!("normals");

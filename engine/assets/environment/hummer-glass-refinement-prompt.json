@@ -1,0 +1,13 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-11-05",
+  "mode": "edit",
+  "input_role": "First repainted Hummer atlas; same UV layout",
+  "prompt": "Use case: precise-object-edit. Asset type: existing UV albedo texture atlas for a real game mesh. EDIT THE ATTACHED ATLAS IN PLACE with exact normalized layout preservation. Keep canvas square and all UV island boundaries and positions identical. Change ONLY the four existing glass panes (two vertically stacked windshield panes in the center narrow strip, and two side door window panes along the lower row), and correct the first character of the existing TEOR stencil if necessary so the exact word is TEOR (T E O R, not IEOR). Do not add or move windows. Do NOT alter camouflage, paint colors, any door outlines, handles, wheels, grille, headlights, roof, gaskets, trim, blank blue and white unused patches, or geometry layout. The old glass renders too dark and flat in realtime. Repaint the interiors of those four existing panes as readable realistic smoked automotive glass with substantially higher local contrast: a pale desaturated blue-gray reflected sky near the top of each pane fading to deep cool charcoal near its bottom; a clear soft reflected cloud band and faint blurred tree silhouettes in the lower third. Keep highlights controlled but visibly brighter than now, so the glass painting survives a dark game lighting setup. The result must visibly read as glass rather than gray sheet metal. Subtle ghosted dashboard/seat shapes behind tinted glass are acceptable, but no people, no actual transparency, no broad uniform gray fills, no colored neon, no white glare covering an entire pane. Keep existing rubber seals and wipers sharp, precisely at the same pixel positions and sizes. Keep everything outside the existing glass interiors pixel-position invariant. Output the same square UV atlas at the same aspect ratio, not a car render, no extra labels or margins.",
+  "output": "textures/hummer-body-v1.png",
+  "actual_resolution": [
+    1254,
+    1254
+  ],
+  "pixel_postprocessing": "none; refined generated PNG copied unchanged"
+}

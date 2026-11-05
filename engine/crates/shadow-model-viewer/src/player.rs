@@ -13,7 +13,7 @@ use std::error::Error;
 
 const MOTIONS: [&str; 4] = [
     "motions/bipedal_stand.bmf",
-    "motions/bipedal_stand_walk_80.bmf",
+    "motions/bipedal_walk.bmf",
     "motions/bipedal_stand_run.bmf",
     "motions/bipedal_stand_wave.bmf",
 ];

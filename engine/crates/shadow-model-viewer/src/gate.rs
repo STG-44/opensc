@@ -197,7 +197,7 @@ impl Gate {
         let mut points = Vec::new();
         let mut triangles = Vec::new();
         for part in scene.models[&object.path]
-            .parts
+            .interaction_parts()
             .iter()
             .filter(|p| parts.contains(&p.name))
         {

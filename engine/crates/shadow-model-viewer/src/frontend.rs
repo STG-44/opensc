@@ -209,7 +209,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let Some(config) = config()? else {
         return Ok(());
     };
-    let catalog = Arc::new(AssetCatalog::open(
+    let catalog = Arc::new(crate::scene::open_game_catalog(
         &config.game,
         config.overrides.as_deref(),
     )?);
@@ -293,6 +293,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     .insert_resource(saved.clone())
     .insert_resource(crate::localization::Language(saved.language))
     .add_plugins(crate::localization::LocalizationPlugin)
+    .add_plugins(crate::vehicle::weather::EquipmentPlugin)
     .insert_resource(training::CameraOptions {
         speed: saved.camera_speed,
         edge_scroll: saved.edge_scroll,

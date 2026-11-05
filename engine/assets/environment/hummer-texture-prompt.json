@@ -1,0 +1,16 @@
+{
+  "tool": "built-in image_gen",
+  "date": "2026-11-05",
+  "mode": "edit",
+  "input_roles": [
+    "Private installed 128×128 Hummer UV atlas: layout reference/edit target",
+    "Local assembled Hummer screenshot: supporting appearance reference"
+  ],
+  "prompt": "Use case: precise-object-edit.\nAsset type: high resolution 2048x2048 RGB diffuse/albedo UV texture atlas for the EXISTING Hummer game mesh, NOT a picture of a car.\nInput image 1 is the EDIT TARGET and exact UV layout reference: the entire square 128x128 legacy Hummer texture atlas. Input image 2 is a supporting reference of how that exact vehicle is assembled in the game, not a target to redraw.\nPrimary request: fully repaint the first atlas at 2048x2048 with crisp physically credible detail, while STRICTLY preserving the normalized pixel positions, sizes, orientation and silhouette of EVERY UV island and every window, wheel arch, roof patch, front grille, and lamp. The result will be mapped directly with the existing mesh UVs; changing layout breaks the model. Maintain the same original muted woodland camouflage palette: olive green, brown, faded tan and near-black; keep the large camouflage shapes aligned in the same places but replace blurred pixels with finely painted material texture. Add clear dark narrow door panel seams precisely where the existing 4 door seams are, black rubber window gaskets, correct door hinges and dark recessed rectangular handles. Repaint the existing window regions as dark smoke blue-gray glass with restrained smooth sky reflections and subtle edge tint: windows must clearly look like glass, never bright blue rectangles or extra windows. Sharpen existing grille slats, vents, bolts, weathered metal paint, modest dust around the lower edges, red and amber tail lenses. Preserve exact rear-side stencil text 'TEOR' in white, in its current position/orientation/size. Use balanced neutral lighting and restrained highlights suitable for realtime 3D; avoid cast shadows or a shiny studio photograph.\nComposition constraints: square atlas fills the canvas edge to edge, no margins, no perspective, no isometric or assembled vehicle views. Preserve original empty/unoccupied white regions as white, including right-middle empty patch. Do not move, rotate, separate, duplicate or invent islands. Do not add labels, coordinate grids, watermarks or extra writing. Keep all existing layout boundaries geometrically identical; change only the quality and detail of the painted material. Output one opaque 2048 square game texture atlas.",
+  "output": "textures/hummer-body-v1.png",
+  "actual_resolution": [
+    1254,
+    1254
+  ],
+  "pixel_postprocessing": "none; generated PNG copied unchanged"
+}

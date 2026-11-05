@@ -109,20 +109,29 @@ impl Clip {
     pub fn cycle_displacement(&self) -> Vec3 {
         self.frames.last().expect("nonempty clip").root - self.frames[0].root
     }
+    fn root_at(&self, seconds: f32) -> Vec3 {
+        let frame =
+            (seconds.clamp(0.0, self.duration()) * self.fps).min((self.frames.len() - 1) as f32);
+        let a = frame.floor() as usize;
+        self.frames[a].root.lerp(
+            self.frames[(a + 1).min(self.frames.len() - 1)].root,
+            frame - a as f32,
+        )
+    }
     /// Дельта включает целые пройденные циклы, поэтому на стыке нет шага назад.
     pub fn advance(&self, seconds: &mut f32, dt: f32) -> Vec3 {
         let duration = self.duration();
         if duration == 0.0 || dt <= 0.0 {
             return Vec3::ZERO;
         }
-        let old = self.sample(*seconds).root;
+        let old = self.root_at(*seconds);
         let total = *seconds + dt;
         let cycles = (total / duration).floor();
         *seconds = total.rem_euclid(duration);
-        self.cycle_displacement() * cycles + self.sample(*seconds).root - old
+        self.cycle_displacement() * cycles + self.root_at(*seconds) - old
     }
     pub fn displacement_at(&self, seconds: f32) -> Vec3 {
-        self.sample(seconds).root - self.frames[0].root
+        self.root_at(seconds) - self.frames[0].root
     }
 }
 struct Transition {
@@ -279,6 +288,21 @@ mod tests {
     }
     fn clip() -> Clip {
         Clip::new(&motion(), &bones()).unwrap()
+    }
+    #[test]
+    fn root_only_sampling_preserves_fractional_and_wrapped_travel() {
+        let c = clip();
+        for t in [-1., 0., 0.025, 0.05, 0.1, 1.] {
+            near(c.root_at(t), c.sample(t).root);
+        }
+        let mut t = 0.075;
+        let old = c.sample(t).root;
+        let dt = 0.34;
+        let cycles = ((t + dt) / c.duration()).floor();
+        let next = (t + dt).rem_euclid(c.duration());
+        let expected = c.cycle_displacement() * cycles + c.sample(next).root - old;
+        near(c.advance(&mut t, dt), expected);
+        assert!((t - next).abs() < 1e-5);
     }
     fn near(a: Vec3, b: Vec3) {
         assert!((a - b).length() < 1e-4, "{a:?} != {b:?}");

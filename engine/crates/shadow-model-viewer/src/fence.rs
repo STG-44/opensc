@@ -116,7 +116,7 @@ fn node_data(catalog: &AssetCatalog, path: &str) -> Result<FenceGeometry, Box<dy
 }
 fn triangles(model: &scene::PreparedModel) -> Result<Vec<[Vec3; 3]>, Box<dyn Error>> {
     let mut result = Vec::new();
-    for part in &model.parts {
+    for part in model.interaction_parts() {
         let Some(VertexAttributeValues::Float32x3(v)) =
             part.mesh.attribute(Mesh::ATTRIBUTE_POSITION)
         else {
@@ -812,14 +812,12 @@ pub fn setup(
         ))
         .id();
     for part in model.parts {
+        let surface = part.surface();
         commands.spawn((
             Mesh3d(meshes.add(part.mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color_texture: part.texture.as_ref().map(|p| textures[p].clone()),
-                alpha_mode: part.alpha_mode,
-                cull_mode: None,
-                perceptual_roughness: 0.95,
-                ..default()
+                ..surface
             })),
             Transform::default(),
             ChildOf(parent),

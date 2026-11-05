@@ -13,6 +13,7 @@ use shadow_formats::{
     AssetCatalog, CampaignEventType as Event, SmfModel, TerrainGrid, config_lines,
 };
 use std::error::Error;
+pub(crate) mod weather;
 
 const EXIT_RADIUS: f32 = 4.0;
 #[derive(Clone, Debug)]
@@ -168,7 +169,7 @@ impl Vehicle {
         let mut triangles = Vec::new();
         let mut points = Vec::new();
         let mut wheels = Vec::new();
-        for part in &scene.models[path].parts {
+        for part in scene.models[path].interaction_parts() {
             let Some(VertexAttributeValues::Float32x3(v)) =
                 part.mesh.attribute(Mesh::ATTRIBUTE_POSITION)
             else {
@@ -221,7 +222,7 @@ impl Vehicle {
         {
             let matrix = Mat4::from_scale(Vec3::splat(WORLD_SCALE)) * i.transform.to_matrix();
             for part in scene.models[&i.path]
-                .parts
+                .interaction_parts()
                 .iter()
                 .filter(|p| p.alpha_mode == AlphaMode::Opaque)
             {
@@ -831,6 +832,7 @@ pub struct NativeSmoke {
     start: Vec3,
     checks: Vec<serde_json::Value>,
     before_reset: Option<serde_json::Value>,
+    brake_seen: bool,
 }
 impl NativeSmoke {
     pub fn new(path: std::path::PathBuf, screenshot: Option<std::path::PathBuf>) -> Self {
@@ -844,6 +846,7 @@ impl NativeSmoke {
             start: Vec3::ZERO,
             checks: Vec::new(),
             before_reset: None,
+            brake_seen: false,
         }
     }
 }
@@ -875,6 +878,7 @@ pub fn native_smoke(
         Query<&mut ButtonVisualState, With<ExitButton>>,
     ),
     mut exit: MessageWriter<AppExit>,
+    lights: Option<Res<weather::EquipmentState>>,
 ) {
     let (Some(mut s), Some(mut v), Some(mut p), (Some(inv), Some(armor), Some(medical)), Some(t)) =
         (s, v, p, equipment, t)
@@ -884,6 +888,7 @@ pub fn native_smoke(
     let (camera, window, geometry, preview) = view;
     let (roots, objects, circles, mut buttons) = render;
     let (camera, transform) = *camera;
+    s.brake_seen |= lights.is_some_and(|lights| lights.braking());
     s.total += 1;
     s.frames += 1;
     if s.last != Some(s.stage) {
@@ -945,8 +950,15 @@ pub fn native_smoke(
                 s.stage = 2;
             }
         }
-        2 if !v.occupied && !v.approaching && p.destination.is_none() => {
-            s.stage = 1;
+        2 if !v.occupied && !v.approaching && p.destination.is_none() && s.frames >= 4 => {
+            panic!(
+                "Vehicle smoke boarding did not start after click release: selected={} paused={} route_failed={} vehicle={} player={}",
+                p.selected,
+                p.playback.paused,
+                p.route.failed,
+                v.report(),
+                p.report()
+            );
         }
         2 if v.occupied && t.shown.iter().any(|h| h == "help_combat_16") => {
             assert!(
@@ -1079,6 +1091,9 @@ pub fn native_smoke(
             s.stage = 13;
         }
         13 => {
+            assert!(s.brake_seen, "vehicle braking must activate stop lamps");
+            s.checks
+                .push(serde_json::json!({"stop_lamps_on_braking":true}));
             assert!(!v.occupied && !v.approaching && !v.exit_armed);
             assert_eq!(v.position, v.spawn);
             assert_eq!((v.speed, v.entries, v.exits), (0.0, 0, 0));

@@ -65,8 +65,7 @@ impl World<'_> {
             if (b.y - a.y).abs() > run * 1.0 + 0.02
                 || self
                     .geometry
-                    .movement_hit(a, b, self.height, |id| self.ignored(id))
-                    .is_some()
+                    .movement_blocked(a, b, self.height, |id| self.ignored(id))
                 || self.fence.is_some_and(|f| f.movement_hit(a, b).is_some())
                 || self.gate.is_some_and(|g| g.movement_hit(a, b).is_some())
             {

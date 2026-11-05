@@ -2,6 +2,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use shadow_formats::{AssetCatalog, GutArchive};
 use std::{env, error::Error, fs::OpenOptions, io::Write, path::Path};
+mod environment;
 mod maps;
 mod missions;
 mod models;
@@ -18,13 +19,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() || args.iter().any(|arg| arg == "--help") {
         println!(
-            "shadow-tools summary|list|extract --game-dir PATH [--overrides PATH] [--filter TEXT] [--asset NAME --output FILE]\nshadow-tools archive --file FILE.gut --json [--hash]\nshadow-tools motion|motions --game-dir PATH [--asset NAME.bmf] --json\nshadow-tools map|maps|heightmap --game-dir PATH [--asset NAME] --json\nshadow-tools mission --game-dir PATH [--overrides PATH] --asset campaign/NAME/NAME.txt --json\nshadow-tools model|models --game-dir PATH [--overrides PATH] [--asset NAME.smf] [--filter TEXT] --json"
+            "shadow-tools summary|list|extract --game-dir PATH [--overrides PATH] [--filter TEXT] [--asset NAME --output FILE]\nshadow-tools environment --game-dir PATH --textures PATH --output NEW_DIRECTORY\nshadow-tools archive --file FILE.gut --json [--hash]\nshadow-tools motion|motions --game-dir PATH [--asset NAME.bmf] --json\nshadow-tools map|maps|heightmap --game-dir PATH [--asset NAME] --json\nshadow-tools mission --game-dir PATH [--overrides PATH] --asset campaign/NAME/NAME.txt --json\nshadow-tools model|models --game-dir PATH [--overrides PATH] [--asset NAME.smf] [--filter TEXT] --json"
         );
         return Ok(());
     }
     if !matches!(
         args[0].as_str(),
-        "summary"
+        "environment"
+            | "summary"
             | "list"
             | "extract"
             | "archive"
@@ -66,7 +68,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         if !matches!(
             option,
-            "--game-dir" | "--overrides" | "--filter" | "--asset" | "--output" | "--file"
+            "--game-dir"
+                | "--overrides"
+                | "--filter"
+                | "--asset"
+                | "--output"
+                | "--file"
+                | "--textures"
         ) {
             return Err(format!("неизвестный аргумент {option}").into());
         }
@@ -107,6 +115,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let game_dir = required("--game-dir")?;
     let catalog = AssetCatalog::open(game_dir, flag("--overrides").map(Path::new))?;
     match args[0].as_str() {
+        "environment" => println!(
+            "{}",
+            serde_json::to_string_pretty(&environment::build(
+                &catalog,
+                Path::new(required("--textures")?),
+                Path::new(required("--output")?)
+            )?)?
+        ),
         "mission" => println!(
             "{}",
             serde_json::to_string_pretty(&missions::describe(&catalog, required("--asset")?)?)?

@@ -1,0 +1,71 @@
+{
+  "models": [
+    {
+      "path": "models/alsctr-south1/alsctr-south1.smf",
+      "triangles": 5712,
+      "vertices": 4656
+    },
+    {
+      "path": "models/alsctr-south2/alsctr-south2.smf",
+      "triangles": 5712,
+      "vertices": 4656
+    },
+    {
+      "path": "models/alsctr-south3/alsctr-south3.smf",
+      "triangles": 5712,
+      "vertices": 4656
+    },
+    {
+      "path": "models/alstfn-consertinafence/alstfn-consertinafence.smf",
+      "triangles": 12000,
+      "vertices": 9104
+    },
+    {
+      "path": "models/alstfn-consertinafence_end/alstfn-consertinafence_end.smf",
+      "triangles": 12000,
+      "vertices": 9104
+    },
+    {
+      "path": "models/alstfn-consertinafence_cut_end/alstfn-consertinafence_cut_end.smf",
+      "triangles": 13072,
+      "vertices": 9912
+    },
+    {
+      "path": "models/alstfn-consertinafencegate/alstfn-consertinafencegate.smf",
+      "triangles": 13924,
+      "vertices": 10530
+    },
+    {
+      "path": "models/alstfn-barbfence/alstfn-barbfence.smf",
+      "triangles": 5564,
+      "vertices": 4370
+    },
+    {
+      "path": "models/alstfn-barbfence_cut_end/alstfn-barbfence_cut_end.smf",
+      "triangles": 5684,
+      "vertices": 4458
+    },
+    {
+      "path": "models/alvhqd-hummer/alvhqd-hummer.smf",
+      "triangles": 12216,
+      "vertices": 15738
+    },
+    {
+      "path": "models/alstwa-concrete01/alstwa-concrete01.smf",
+      "triangles": 36,
+      "vertices": 76
+    },
+    {
+      "path": "models/alstwa-concrete02/alstwa-concrete02.smf",
+      "triangles": 36,
+      "vertices": 76
+    },
+    {
+      "path": "models/alstwa-concrete03/alstwa-concrete03.smf",
+      "triangles": 36,
+      "vertices": 76
+    }
+  ],
+  "pack": "OpenSC environment prototype",
+  "version": 1
+}

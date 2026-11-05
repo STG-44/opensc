@@ -85,6 +85,69 @@ class EnginePublication(unittest.TestCase):
         with self.assertRaises(ValueError):
             publish.build(self.args)
 
+    def add_owned_pack(self):
+        prefix = 'bin/x86_64-unknown-linux-gnu/environment-pack'
+        root = self.package / prefix
+        model = 'models/opensc-fixture/opensc-fixture.smf'
+        files = {
+            'environment-pack.json': json.dumps({'version': 1, 'models': [{'path': model}]}).encode(),
+            model: b'newly authored geometry fixture',
+            model + '.visual.json': json.dumps({'version': 1, 'source_sha256': '0' * 64,
+                'visual_sha256': hashlib.sha256(b'newly authored geometry fixture').hexdigest()}).encode(),
+        }
+        for name in ['bark.png', 'leaves.png', 'galvanized.png', 'masonry.png', 'concrete.png',
+                     'hummer-body-v1.png', 'hummer-amber.bmp', 'hummer-glass.bmp', 'hummer-lamp.bmp',
+                     'hummer-red.bmp', 'hummer-rubber.bmp', 'hummer-trim.bmp', 'hummer-wheels.bmp']:
+            files['textures/opensc-environment/' + name] = b'owned texture fixture'
+        for name, data in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        info_path = self.package / 'build-info.json'
+        info = json.loads(info_path.read_text())
+        info['environment_pack'] = prefix
+        info_path.write_text(json.dumps(info))
+        self.refresh_inventory()
+        return root, model
+
+    def refresh_inventory(self):
+        files = [p for p in sorted(self.package.rglob('*')) if p.is_file() and p.name != 'package-files.json']
+        inventory = [{'path': p.relative_to(self.package).as_posix(), 'size': p.stat().st_size,
+                      'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]
+        (self.package / 'package-files.json').write_text(json.dumps(inventory))
+
+    def test_owned_pack_is_versioned_with_engine_and_keeps_original_data_external(self):
+        self.add_owned_pack()
+        publish.build(self.args)
+        release = json.loads((self.args.output / 'manifest-v1.json').read_text())['release']
+        self.assertIsNone(release['data_directory'])
+        self.assertEqual(len(release['files']), 23)
+        for item in release['files']:
+            self.assertEqual((self.args.output / item['url']).read_bytes(),
+                             (self.package / item['path']).read_bytes())
+
+    def test_owned_pack_rejects_original_archive_and_changed_geometry(self):
+        root, model = self.add_owned_pack()
+        (root / 'config.gut').write_bytes(b'private original')
+        self.refresh_inventory()
+        with self.assertRaises(ValueError):
+            publish.build(self.args)
+        (root / 'config.gut').unlink()
+        (root / model).write_bytes(b'changed geometry')
+        self.refresh_inventory()
+        with self.assertRaises(ValueError):
+            publish.build(self.args)
+        self.assertFalse(self.args.output.exists())
+
+    def test_owned_pack_cannot_point_outside_executable_sibling(self):
+        self.add_owned_pack()
+        path = self.package / 'build-info.json'
+        info = json.loads(path.read_text()); info['environment_pack'] = '../private'
+        path.write_text(json.dumps(info)); self.refresh_inventory()
+        with self.assertRaises(ValueError):
+            publish.build(self.args)
+        self.assertFalse(self.args.output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

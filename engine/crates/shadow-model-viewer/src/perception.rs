@@ -1,7 +1,8 @@
 //! Shared team visibility, source perception parameters, and persistent radar fog.
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, TaskPool, futures::check_ready};
 use shadow_formats::{AssetCatalog, ConfigLine, TerrainGrid, config_lines};
-use std::error::Error;
+use std::{error::Error, sync::Arc, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Skills {
@@ -166,6 +167,64 @@ struct Key {
     neutral: Person,
     geometry: u64,
 }
+#[derive(Clone, PartialEq)]
+struct FogKey {
+    observers: Vec<Person>,
+    geometry: u64,
+}
+
+struct FogResult {
+    size: UVec2,
+    visible: Vec<bool>,
+    worker_ms: f64,
+}
+
+fn scan_fog(
+    grid: &TerrainGrid,
+    geometry: &crate::pickup::SightSnapshot,
+    settings: &Settings,
+    observers: &[Person],
+    size: UVec2,
+    extent: Vec2,
+) -> FogResult {
+    let start = Instant::now();
+    let mut visible = vec![false; (size.x * size.y) as usize];
+    for observer in observers {
+        let eye = observer.eye();
+        let radius = settings.range(observer.skills.perception);
+        let center = crate::radar::uv(observer.position, extent) * size.as_vec2();
+        let cells = Vec2::splat(radius) / extent * size.as_vec2();
+        let low = (center - cells).floor().max(Vec2::ZERO).as_uvec2();
+        let high = (center + cells)
+            .ceil()
+            .min((size - UVec2::ONE).as_vec2())
+            .max(Vec2::ZERO)
+            .as_uvec2();
+        for y in low.y..=high.y {
+            for x in low.x..=high.x {
+                let uv = (Vec2::new(x as f32, y as f32) + Vec2::splat(0.5)) / size.as_vec2();
+                let p = Vec3::new(uv.x * extent.x, 0., -uv.y * extent.y);
+                let Some(height) = crate::player::surface(grid, p) else {
+                    continue;
+                };
+                let target = p.with_y(height + 0.2);
+                let i = (y * size.x + x) as usize;
+                if !visible[i]
+                    && target.distance(eye) <= radius
+                    && terrain_clear(grid, eye, target)
+                    && geometry.line_of_sight(eye, target)
+                {
+                    visible[i] = true;
+                }
+            }
+        }
+    }
+    FogResult {
+        size,
+        visible,
+        worker_ms: start.elapsed().as_secs_f64() * 1000.,
+    }
+}
 
 #[derive(Resource)]
 pub(crate) struct VisibilityState {
@@ -181,6 +240,11 @@ pub(crate) struct VisibilityState {
     key: Option<Key>,
     pub elapsed: f64,
     extent: Vec2,
+    fog: Option<Task<FogResult>>,
+    fog_key: Option<FogKey>,
+    terrain: Option<Arc<TerrainGrid>>,
+    geometry_cache: Option<(u64, Arc<crate::pickup::SightSnapshot>)>,
+    last_worker_ms: f64,
 }
 impl VisibilityState {
     pub fn prepare(catalog: &AssetCatalog) -> Result<Self, Box<dyn Error>> {
@@ -201,6 +265,11 @@ impl VisibilityState {
             key: None,
             elapsed: f64::NEG_INFINITY,
             extent: Vec2::ONE,
+            fog: None,
+            fog_key: None,
+            terrain: None,
+            geometry_cache: None,
+            last_worker_ms: 0.,
         })
     }
     pub fn contact(&self, i: usize) -> bool {
@@ -231,7 +300,26 @@ impl VisibilityState {
         self.contacts.fill(false);
         self.neutral = false;
         self.key = None;
+        self.fog = None;
+        self.fog_key = None;
+        self.terrain = None;
+        self.geometry_cache = None;
         self.elapsed = f64::NEG_INFINITY;
+        self.generation = self.generation.wrapping_add(1);
+    }
+    fn poll_fog(&mut self) {
+        let Some(result) = self.fog.as_mut().and_then(check_ready) else {
+            return;
+        };
+        self.fog = None;
+        if result.size != self.size {
+            return;
+        }
+        for (known, seen) in self.explored.iter_mut().zip(&result.visible) {
+            *known |= *seen;
+        }
+        self.visible = result.visible;
+        self.last_worker_ms = result.worker_ms;
         self.generation = self.generation.wrapping_add(1);
     }
     fn observe(
@@ -241,50 +329,60 @@ impl VisibilityState {
         grid: &TerrainGrid,
         geometry: &crate::pickup::Pickup,
     ) {
+        // Poll without waiting, even if no new contact refresh is due yet.
+        self.poll_fog();
         if now - self.elapsed < self.settings.period {
             return;
         }
-        if self.key.as_ref() == Some(&key) {
+        let fog_key = FogKey {
+            observers: key.observers.clone(),
+            geometry: key.geometry,
+        };
+        let contacts_changed = self.key.as_ref() != Some(&key);
+        let fog_changed = self.fog_key.as_ref() != Some(&fog_key);
+        if !contacts_changed && !fog_changed {
             return;
         }
         self.elapsed = now;
         self.extent = crate::radar::extent(grid);
         let size = (self.extent / 2.0).ceil().as_uvec2().max(UVec2::ONE);
         if self.size != size {
+            self.fog = None;
+            self.fog_key = None;
+            self.terrain = None;
+            self.geometry_cache = None;
             self.size = size;
             self.explored = vec![false; (size.x * size.y) as usize];
             self.visible = self.explored.clone();
         }
-        self.visible.fill(false);
         let clear = |a, b| line_of_sight(grid, geometry, a, b);
-        for observer in &key.observers {
-            let radius = self.settings.range(observer.skills.perception);
-            let center = crate::radar::uv(observer.position, self.extent) * size.as_vec2();
-            let cells = Vec2::splat(radius) / self.extent * size.as_vec2();
-            let low = (center - cells).floor().max(Vec2::ZERO).as_uvec2();
-            let high = (center + cells)
-                .ceil()
-                .min((size - UVec2::ONE).as_vec2())
-                .max(Vec2::ZERO)
-                .as_uvec2();
-            for y in low.y..=high.y {
-                for x in low.x..=high.x {
-                    let uv = (Vec2::new(x as f32, y as f32) + Vec2::splat(0.5)) / size.as_vec2();
-                    let p = Vec3::new(uv.x * self.extent.x, 0.0, -uv.y * self.extent.y);
-                    let Some(height) = crate::player::surface(grid, p) else {
-                        continue;
-                    };
-                    let target = p.with_y(height + 0.2);
-                    let i = (y * size.x + x) as usize;
-                    if !self.visible[i]
-                        && target.distance(observer.eye()) <= radius
-                        && clear(observer.eye(), target)
-                    {
-                        self.visible[i] = true;
-                        self.explored[i] = true;
-                    }
-                }
+        // At most one scan is in flight. It owns immutable input; moving a car
+        // or gate cannot mutate a worker's geometry or starve it of results.
+        if self.fog.is_none() && fog_changed {
+            let terrain = self
+                .terrain
+                .get_or_insert_with(|| Arc::new(grid.clone()))
+                .clone();
+            if self
+                .geometry_cache
+                .as_ref()
+                .is_none_or(|(rev, _)| *rev != key.geometry)
+            {
+                self.geometry_cache = Some((key.geometry, Arc::new(geometry.sight_snapshot())));
             }
+            let world = self.geometry_cache.as_ref().unwrap().1.clone();
+            let observers = key.observers.clone();
+            let settings = self.settings.clone();
+            let extent = self.extent;
+            self.fog_key = Some(fog_key);
+            self.fog = Some(
+                AsyncComputeTaskPool::get_or_init(TaskPool::new).spawn(async move {
+                    scan_fog(&terrain, &world, &settings, &observers, size, extent)
+                }),
+            );
+        }
+        if !contacts_changed {
+            return;
         }
         self.contacts = key
             .targets
@@ -309,6 +407,9 @@ pub(crate) fn line_of_sight(
     from: Vec3,
     to: Vec3,
 ) -> bool {
+    terrain_clear(grid, from, to) && geometry.line_of_sight(from, to)
+}
+fn terrain_clear(grid: &TerrainGrid, from: Vec3, to: Vec3) -> bool {
     if !from.is_finite() || !to.is_finite() {
         return false;
     }
@@ -320,7 +421,56 @@ pub(crate) fn line_of_sight(
             return false;
         }
     }
-    geometry.line_of_sight(from, to)
+    true
+}
+
+/// CPU-only diagnostics against installed data; excludes renderer and GPU time.
+/// Keep the ordinary visibility scheduling intact so this measures the burst
+/// experienced by a moving player, rather than a synthetic empty scene.
+pub(crate) fn profile_cpu(
+    catalog: &AssetCatalog,
+    grid: &TerrainGrid,
+    geometry: &crate::pickup::Pickup,
+    actor: &crate::player::Player,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let mut state = VisibilityState::prepare(catalog)?;
+    let mut times = Vec::new();
+    let mut workers = Vec::new();
+    let mut max_poll_ms = 0f64;
+    for frame in 0..8 {
+        let mut person = Person::actor(actor, true);
+        person.position.x += frame as f32 * 0.1;
+        let key = Key {
+            observers: vec![person.clone()],
+            targets: Vec::new(),
+            neutral: person,
+            geometry: geometry.revision(),
+        };
+        let start = Instant::now();
+        state.observe(frame as f64, key, grid, geometry);
+        times.push(start.elapsed().as_secs_f64() * 1000.);
+        while state.fog.is_some() {
+            let poll = Instant::now();
+            state.poll_fog();
+            max_poll_ms = max_poll_ms.max(poll.elapsed().as_secs_f64() * 1000.);
+            if state.fog.is_some() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        workers.push(state.last_worker_ms);
+    }
+    let clips=actor.clips.iter().map(|clip| {
+        let a=&clip.frames[0];let b=clip.frames.last().unwrap();
+        let seam=a.bones.iter().zip(&b.bones).map(|(a,b)|a.rotation.angle_between(b.rotation).abs().to_degrees()).fold(0f32,f32::max);
+        serde_json::json!({"name":clip.name,"fps":clip.fps,"duration_seconds":clip.duration(),"loop_seam_degrees":seam})
+    }).collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"cpu_only":true,"renderer_measured":false,"visibility_update_ms":times,
+        "fog_cells":state.size.to_array(),"refresh_seconds":state.settings.period,
+        "visibility_worker_ms":workers,"maximum_poll_ms":max_poll_ms,"background_visibility":true,
+        "actual_standing_walk":actor.postures.as_ref().map(|p|&actor.clips[p.walk[0]].name),
+        "actual_standing_run":actor.postures.as_ref().map(|p|&actor.clips[p.run[0]].name),"animation_clips":clips}),
+    )
 }
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update(
@@ -524,6 +674,11 @@ mod tests {
             key: None,
             elapsed: f64::NEG_INFINITY,
             extent: Vec2::ONE,
+            fog: None,
+            fog_key: None,
+            terrain: None,
+            geometry_cache: None,
+            last_worker_ms: 0.,
         };
         let mut observer = Person::actor(&p, true);
         observer.position = Vec3::new(4.0, 0.0, -4.0);
@@ -534,14 +689,45 @@ mod tests {
             geometry: 0,
         };
         v.observe(0.0, key.clone(), &grid, &geometry);
+        finish_scan(&mut v);
         let old = Vec2::new(4.0, 4.0) / crate::radar::extent(&grid);
         assert_eq!(v.shade(old), 1.0);
+        let generation = v.generation;
+        v.observe(1.0, key.clone(), &grid, &geometry);
+        assert!(v.fog.is_none());
+        assert_eq!(v.generation, generation);
+        // Simulate an older scan still in flight while the observer moves.
+        v.fog = Some(AsyncComputeTaskPool::get().spawn(std::future::pending()));
         let mut key2 = key;
         key2.observers[0].position = Vec3::new(60.0, 0.0, -60.0);
-        v.observe(1.0, key2, &grid, &geometry);
+        v.observe(2.0, key2.clone(), &grid, &geometry);
+        assert!(v.fog.is_some());
+        v.fog = None; // older scan drains; its contact key must not eat this update
+        v.observe(3.0, key2, &grid, &geometry);
+        finish_scan(&mut v);
         assert_eq!(v.shade(old), 0.45);
+        assert_eq!(
+            v.shade(Vec2::new(60., 60.) / crate::radar::extent(&grid)),
+            1.
+        );
+        v.fog = Some(AsyncComputeTaskPool::get().spawn(async {
+            FogResult {
+                size: UVec2::splat(33),
+                visible: vec![true; 33 * 33],
+                worker_ms: 0.,
+            }
+        }));
         v.reset();
+        v.poll_fog();
         assert_eq!(v.shade(old), 0.06);
         assert!(!v.contact(0));
+    }
+    fn finish_scan(v: &mut VisibilityState) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while v.fog.is_some() {
+            v.poll_fog();
+            assert!(Instant::now() < deadline, "fog worker did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 }

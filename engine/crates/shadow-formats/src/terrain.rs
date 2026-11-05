@@ -1,7 +1,7 @@
 //! Проверенный поднабор terrain_mapping.txt и треугольная сетка высот.
 use crate::{Error, PcxImage, Result, config_lines};
 use std::collections::BTreeMap;
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TerrainConfig {
     pub name: String,
     pub width: usize,
@@ -91,7 +91,7 @@ impl TerrainConfig {
         })
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TerrainGrid {
     pub config: TerrainConfig,
     pub heights: Vec<f32>,

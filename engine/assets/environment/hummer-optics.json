@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "texture": "hummer-body-v1.png",
+  "texture_sha256": "fde8f33004dc45ca2a1a1f7f4a3313ea23aa6caf7d5b11f0ad440e98e1642467",
+  "method": "Measured outer reflector edges in the generated atlas; UV projection preserves registration under perspective",
+  "headlamps": [
+    {
+      "center_uv": [
+        0.7005582137161085,
+        0.3277511961722488
+      ],
+      "inner_radii_uv": [
+        0.02113237639553429,
+        0.02033492822966507
+      ],
+      "outer_radii_uv": [
+        0.023923444976076555,
+        0.023125996810207338
+      ]
+    },
+    {
+      "center_uv": [
+        0.7005582137161085,
+        0.5426634768740032
+      ],
+      "inner_radii_uv": [
+        0.02113237639553429,
+        0.02033492822966507
+      ],
+      "outer_radii_uv": [
+        0.023923444976076555,
+        0.023125996810207338
+      ]
+    }
+  ]
+}

@@ -6,6 +6,7 @@ launcher repository owns the update protocol and publication step.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -147,6 +148,18 @@ def stage(args):
             "Требования конкретной сборки указаны в build-info.json.\n",
             encoding="utf-8")
         sources = source_hashes()
+        environment = PROJECT / 'assets/environment/pack'
+        environment_path = None
+        if environment.is_dir():
+            spec = importlib.util.spec_from_file_location('pack_resources', PROJECT / 'scripts/pack_resources.py')
+            resources = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(resources)
+            environment_path = relative.parent / 'environment-pack'
+            for name in resources.owned_pack_files(environment):
+                destination = root / environment_path / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(environment / name, destination)
+                sources['assets/environment/pack/' + name] = digest(environment / name)
         info = {
             "schema_version": 1,
             "project": "opensc-engine",
@@ -159,6 +172,7 @@ def stage(args):
             "source_files": sources,
             "requires_original_data": True,
             "original_data_included": False,
+            "environment_pack": environment_path.as_posix() if environment_path else None,
             "minimum_glibc": glibc_requirement(executable) if "linux" in args.target else None,
             "launch_arguments": ["--game-dir", "<original-directory>", "--settings", "<user-settings-file>"],
         }

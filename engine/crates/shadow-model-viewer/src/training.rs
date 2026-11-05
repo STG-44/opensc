@@ -16,6 +16,9 @@ struct Config {
     terrain: String,
     screenshot: Option<PathBuf>,
     scene_json: Option<PathBuf>,
+    cpu_profile: Option<PathBuf>,
+    environment_preview: Option<String>,
+    weather_json: Option<PathBuf>,
     camp: bool,
     camera_orbit: Option<Orbit>,
     player: bool,
@@ -65,8 +68,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let Some(config) = config()? else {
         return Ok(());
     };
-    let catalog = AssetCatalog::open(&config.game, config.overrides.as_deref())?;
-    let scene = map_scene::prepare(&catalog, &config.map, &config.terrain)?;
+    let catalog = crate::scene::open_game_catalog(&config.game, config.overrides.as_deref())?;
+    let mut scene = map_scene::prepare(&catalog, &config.map, &config.terrain)?;
+    if let Some(mode) = &config.environment_preview {
+        scene.daylight.source["environment_preview"] = serde_json::json!(mode);
+        scene.report["daylight"] = scene.daylight.source.clone();
+    }
     println!(
         "Карта {}: {} статических объектов, {} моделей, рельеф {} треугольников",
         config.map,
@@ -180,6 +187,37 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         None
     };
     if let Some(actor) = &mut actor {
+        if let Some(path) = &config.cpu_profile {
+            let mut value = crate::perception::profile_cpu(
+                &catalog,
+                &scene.grid,
+                item.as_ref().unwrap(),
+                actor,
+            )?;
+            let world = crate::navigation::World {
+                grid: &scene.grid,
+                geometry: item.as_ref().unwrap(),
+                fence: fence.as_ref(),
+                gate: gate.as_ref(),
+                height: actor.body_height(),
+            };
+            let mut routes = Vec::new();
+            for offset in [Vec3::new(1., 0., -1.), Vec3::new(8., 0., -2.)] {
+                let goal = actor.position + offset;
+                let start = std::time::Instant::now();
+                let route = crate::navigation::find_path(
+                    actor.position,
+                    goal,
+                    Vec2::from_array(scene.grid.extent()) * map_scene::WORLD_SCALE,
+                    |p| player::surface(&scene.grid, p),
+                    |a, b| world.clear(a, b),
+                );
+                routes.push(serde_json::json!({"offset_metres":offset.to_array(),"milliseconds":start.elapsed().as_secs_f64()*1000.,"waypoints":route.as_ref().map(Vec::len)}));
+            }
+            value["navigation_queries"] = serde_json::json!(routes);
+            std::fs::write(path, serde_json::to_string_pretty(&value)? + "\n")?;
+            return Ok(());
+        }
         let seconds = config.player_seconds.unwrap_or(0.0);
         if [
             "pickup", "stab", "shoot", "grenade", "fence", "smg", "medical", "armor", "vehicle",
@@ -429,6 +467,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         )
         .insert_resource(config.language)
         .add_plugins(crate::localization::LocalizationPlugin)
+        .add_plugins(crate::vehicle::weather::EquipmentPlugin)
         .add_systems(
             Startup,
             (
@@ -564,8 +603,12 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 )
                     .chain(),
             )
-                .chain(),
+                .chain()
+                .run_if(bevy::ecs::schedule::common_conditions::resource_exists::<player::Player>),
         );
+    if !config.player {
+        app.add_systems(Update, (controls, orbit_camera, capture).chain());
+    }
     app.add_systems(Last, crate::hud::release_keys);
     if let Some(h) = hud {
         app.insert_resource(crate::perception::VisibilityState::prepare(&catalog)?);
@@ -662,6 +705,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             config.screenshot.clone(),
         ));
     }
+    if let Some(path) = config.weather_json {
+        app.insert_resource(crate::vehicle::weather::Probe::new(path));
+    }
     if let Some(path) = config.smoke {
         let mut smoke = pickup::Smoke::new(path, config.screenshot);
         smoke.combat = config.combat_smoke;
@@ -694,6 +740,9 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         terrain: "training".into(),
         screenshot: None,
         scene_json: None,
+        cpu_profile: None,
+        environment_preview: None,
+        weather_json: None,
         camp: false,
         camera_orbit: None,
         player: false,
@@ -736,6 +785,19 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--terrain" => config.terrain = value.to_lowercase(),
             "--screenshot" => config.screenshot = Some(value.into()),
             "--scene-json" => config.scene_json = Some(value.into()),
+            "--cpu-profile-json" => {
+                config.cpu_profile = Some(value.into());
+                config.player = true;
+            }
+            "--environment-preview" => {
+                if !["day-dry", "night-dry", "day-rain", "night-rain"].contains(&value.as_str()) {
+                    return Err(
+                        "--environment-preview: day-dry, night-dry, day-rain or night-rain".into(),
+                    );
+                }
+                config.environment_preview = Some(value.clone());
+            }
+            "--vehicle-weather-json" => config.weather_json = Some(value.into()),
             "--player-json" => config.player_json = Some(value.into()),
             "--selection-smoke-json" => {
                 config.selection_smoke = Some(value.into());
@@ -878,11 +940,15 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if usize::from(config.screenshot.is_some())
         + usize::from(config.scene_json.is_some())
         + usize::from(config.player_json.is_some())
+        + usize::from(config.cpu_profile.is_some())
         > 1
     {
         return Err(
-            "выбери один выходной файл: --screenshot, --scene-json или --player-json".into(),
+            "выбери один выходной файл: --screenshot, --scene-json, --player-json или --cpu-profile-json".into(),
         );
+    }
+    if config.weather_json.is_some() && config.screenshot.is_none() {
+        return Err("--vehicle-weather-json requires --screenshot".into());
     }
     if (config.player_json.is_some()
         || config.player_seconds.is_some()
@@ -898,6 +964,8 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         (config.screenshot.as_ref(), "png"),
         (config.scene_json.as_ref(), "json"),
         (config.player_json.as_ref(), "json"),
+        (config.cpu_profile.as_ref(), "json"),
+        (config.weather_json.as_ref(), "json"),
     ] {
         if let Some(path) = path {
             if path
@@ -954,13 +1022,18 @@ pub(crate) fn setup(
 ) {
     let (vehicle, gate) = dynamic;
     let scene = preview.scene.take().expect("startup runs once");
+    let conditions = crate::vehicle::weather::Conditions::from_source(&scene.daylight.source);
+    let sun_intensity = conditions.sun();
+    let ambient_intensity = conditions.ambient();
+    commands.insert_resource(conditions);
+    commands.insert_resource(crate::vehicle::weather::EquipmentState::default());
     let camera = commands
         .spawn((
             Camera3d::default(),
             MapCamera,
             player::SceneEntity,
             AmbientLight {
-                brightness: 500.0,
+                brightness: ambient_intensity,
                 color: scene.daylight.color,
                 ..default()
             },
@@ -970,7 +1043,7 @@ pub(crate) fn setup(
     commands.spawn((
         player::SceneEntity,
         DirectionalLight {
-            illuminance: 6500.0,
+            illuminance: sun_intensity,
             color: scene.daylight.color,
             shadow_maps_enabled: true,
             ..default()
@@ -982,6 +1055,7 @@ pub(crate) fn setup(
             ..default()
         }
         .build(),
+        crate::vehicle::weather::MissionSun,
         Transform::from_rotation(scene.daylight.rotation),
     ));
     commands.insert_resource(DirectionalLightShadowMap { size: 1024 });
@@ -1018,6 +1092,14 @@ pub(crate) fn setup(
             .parts
             .into_iter()
             .map(|part| {
+                let surface = part.surface();
+                let lamp = part.lamp;
+                let wiper = part.wiper.clone();
+                let beam_origins = if matches!(lamp, Some(crate::scene::LampRole::Head)) {
+                    crate::vehicle::weather::lamp_centers(&part.mesh)
+                } else {
+                    Vec::new()
+                };
                 let texture = part.texture.and_then(|t| textures.get(&t).cloned());
                 let material = materials.add(StandardMaterial {
                     base_color: if texture.is_some() {
@@ -1025,13 +1107,18 @@ pub(crate) fn setup(
                     } else {
                         Color::srgb(1.0, 0.12, 0.55)
                     },
-                    base_color_texture: texture,
-                    alpha_mode: part.alpha_mode,
-                    perceptual_roughness: 0.95,
-                    cull_mode: None,
-                    ..default()
+                    base_color_texture: texture.clone(),
+                    emissive_texture: if lamp.is_some() { texture } else { None },
+                    ..surface
                 });
-                (part.name, meshes.add(part.mesh), material)
+                (
+                    part.name,
+                    meshes.add(part.mesh),
+                    material,
+                    lamp,
+                    wiper,
+                    beam_origins,
+                )
             })
             .collect::<Vec<_>>();
         models.insert(path, parts);
@@ -1051,7 +1138,10 @@ pub(crate) fn setup(
                 ChildOf(root),
             ))
             .id();
-        for (name, mesh, material) in &models[&instance.path] {
+        for (name, mesh, material, lamp, wiper, beam_origins) in &models[&instance.path] {
+            if !beam_origins.is_empty() {
+                crate::vehicle::weather::attach_beams(&mut commands, entity, beam_origins);
+            }
             let mut part = commands.spawn((
                 Name::new(name.clone()),
                 Mesh3d(mesh.clone()),
@@ -1059,6 +1149,12 @@ pub(crate) fn setup(
                 Transform::default(),
                 ChildOf(entity),
             ));
+            if let Some(role) = lamp {
+                part.insert(crate::vehicle::weather::Lamp(*role));
+            }
+            if let Some(binding) = wiper {
+                part.insert(crate::vehicle::weather::Wiper(binding.clone()));
+            }
             if let Some(g) = &gate
                 && instance.id == g.id
                 && g.parts.contains(name)
@@ -2261,6 +2357,8 @@ pub(crate) fn cleanup(mut commands: Commands, roots: Query<Entity, With<player::
     commands.remove_resource::<crate::medical::Medical>();
     commands.remove_resource::<crate::armor::Armor>();
     commands.remove_resource::<crate::vehicle::Vehicle>();
+    commands.remove_resource::<crate::vehicle::weather::Conditions>();
+    commands.remove_resource::<crate::vehicle::weather::EquipmentState>();
     commands.remove_resource::<crate::gate::Gate>();
     commands.remove_resource::<crate::party::Party>();
     commands.remove_resource::<crate::roster::Roster>();
