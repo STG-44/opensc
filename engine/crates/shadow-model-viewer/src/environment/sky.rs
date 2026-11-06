@@ -128,7 +128,7 @@ fn uniform(w: &Weather, camera: Vec3) -> SkyUniform {
         ),
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn initialize(
     mut commands: Commands,
     weather: Option<ResMut<Weather>>,

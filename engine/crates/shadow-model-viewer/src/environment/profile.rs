@@ -60,6 +60,7 @@ impl Preset {
             .find(|p| p.key() == value)
             .ok_or("unknown weather preset")
     }
+    #[allow(dead_code)] // Used by the game UI; profiles are also compiled into the map viewer.
     pub fn label(self) -> &'static str {
         match self {
             Self::Mission => "По сценарию",
@@ -78,6 +79,7 @@ impl Preset {
             Self::Blizzard => "Метель",
         }
     }
+    #[allow(dead_code)] // Used by the game UI; profiles are also compiled into the map viewer.
     pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|p| *p == self).unwrap();
         Self::ALL[(i + 1) % Self::ALL.len()]
@@ -199,6 +201,7 @@ impl Quality {
             .find(|p| p.key() == value)
             .ok_or("unknown weather quality")
     }
+    #[allow(dead_code)] // Used by the game UI; profiles are also compiled into the map viewer.
     pub fn next(self) -> Self {
         match self {
             Self::Auto => Self::Low,
@@ -207,6 +210,7 @@ impl Quality {
             Self::High => Self::Auto,
         }
     }
+    #[allow(dead_code)] // Used by the game UI; profiles are also compiled into the map viewer.
     pub fn label(self) -> &'static str {
         match self {
             Self::Auto => "Автоматически",

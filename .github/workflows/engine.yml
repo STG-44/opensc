@@ -34,7 +34,7 @@ jobs:
             target: x86_64-apple-darwin
             platform: macos-x86_64
             executable: shadow-game
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             platform: macos-aarch64
             executable: shadow-game

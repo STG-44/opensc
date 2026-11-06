@@ -426,14 +426,14 @@ pub(super) fn update(
             if let Some(VertexAttributeValues::Float32x3(v)) =
                 mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
             {
-                for (q, v) in group.quads.iter().zip(v.chunks_exact_mut(4)) {
+                for (q, v) in group.quads.iter().zip(v.as_chunks_mut::<4>().0) {
                     v.copy_from_slice(&q.positions);
                 }
             }
             if let Some(VertexAttributeValues::Float32x4(v)) =
                 mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
             {
-                for (q, v) in group.quads.iter().zip(v.chunks_exact_mut(4)) {
+                for (q, v) in group.quads.iter().zip(v.as_chunks_mut::<4>().0) {
                     v.fill(q.color);
                 }
             }
@@ -443,10 +443,10 @@ pub(super) fn update(
     state.active = active;
     state.impacts += impacts;
     if state.generation != w.strike_generation {
-        if let Some(strike) = w.strike {
-            if let Some(mut mesh) = meshes.get_mut(&state.bolt_mesh) {
-                *mesh = bolt(strike, &mut seed);
-            }
+        if let Some(strike) = w.strike
+            && let Some(mut mesh) = meshes.get_mut(&state.bolt_mesh)
+        {
+            *mesh = bolt(strike, &mut seed);
         }
         state.generation = w.strike_generation;
     }
