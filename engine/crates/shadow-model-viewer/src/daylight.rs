@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use shadow_formats::{AssetCatalog, ConfigLine, config_lines};
 use std::{error::Error, f32::consts::FRAC_PI_2};
 
-struct Tables {
+#[derive(Clone)]
+pub(crate) struct Tables {
     direction: [[f32; 24]; 3],
     color: [[f32; 24]; 3],
 }
@@ -49,7 +50,7 @@ impl Tables {
         }
         Ok(result)
     }
-    fn sample(&self, hour: f32) -> Result<(Vec3, Vec3), Box<dyn Error>> {
+    pub(crate) fn sample(&self, hour: f32) -> Result<(Vec3, Vec3), Box<dyn Error>> {
         if !hour.is_finite() {
             return Err("nonfinite mission time".into());
         }
@@ -99,6 +100,7 @@ pub(crate) struct Daylight {
     pub rotation: Quat,
     pub color: Color,
     pub source: serde_json::Value,
+    pub tables: Option<Tables>,
 }
 impl Daylight {
     pub fn prepare(
@@ -131,7 +133,8 @@ impl Daylight {
             return Err("ambiguous campaign lighting for map".into());
         }
         if let Some((path, lines)) = matches.pop() {
-            let (direction, color) = Tables::read(&lines)?.sample(initial.unwrap_or(12.0))?;
+            let tables = Tables::read(&lines)?;
+            let (direction, color) = tables.sample(initial.unwrap_or(12.0))?;
             let source = serde_json::json!({"campaign":path,"campaign_origin":catalog.source_label(&path)?,
                 "map":map,"initial_hour":initial,"sample_hour":initial.unwrap_or(12.0),
                 "direction":direction.to_array(),"linear_rgb":color.to_array(),
@@ -141,6 +144,7 @@ impl Daylight {
                 rotation: Quat::from_rotation_arc(Vec3::NEG_Z, direction),
                 color: Color::linear_rgb(color.x, color.y, color.z),
                 source,
+                tables: Some(tables),
             })
         } else {
             Ok(Self {
@@ -150,6 +154,7 @@ impl Daylight {
                 color: Color::WHITE,
                 source: serde_json::json!({"map":map,"initial_hour":initial,
                     "fallback":"no matching campaign lighting table","original_renderer_photometry_verified":false}),
+                tables: None,
             })
         }
     }

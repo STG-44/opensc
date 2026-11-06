@@ -19,6 +19,10 @@ struct Config {
     cpu_profile: Option<PathBuf>,
     environment_preview: Option<String>,
     weather_json: Option<PathBuf>,
+    environment: crate::environment::Options,
+    environment_json: Option<PathBuf>,
+    environment_time: Option<f32>,
+    environment_flash: bool,
     camp: bool,
     camera_orbit: Option<Orbit>,
     player: bool,
@@ -59,6 +63,8 @@ pub(crate) struct Orbit {
 }
 #[derive(Component)]
 pub(crate) struct MapCamera;
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct CameraUpdate;
 #[derive(Resource)]
 pub(crate) struct CameraOptions {
     pub speed: f32,
@@ -468,6 +474,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(config.language)
         .add_plugins(crate::localization::LocalizationPlugin)
         .add_plugins(crate::vehicle::weather::EquipmentPlugin)
+        .insert_resource(config.environment.clone())
+        .add_plugins(crate::environment::EnvironmentPlugin)
         .add_systems(
             Startup,
             (
@@ -598,7 +606,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                     )
                         .chain(),
                     crate::hud::diagnostics,
-                    orbit_camera,
+                    orbit_camera.in_set(CameraUpdate),
                     capture,
                 )
                     .chain(),
@@ -607,7 +615,10 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 .run_if(bevy::ecs::schedule::common_conditions::resource_exists::<player::Player>),
         );
     if !config.player {
-        app.add_systems(Update, (controls, orbit_camera, capture).chain());
+        app.add_systems(
+            Update,
+            (controls, orbit_camera.in_set(CameraUpdate), capture).chain(),
+        );
     }
     app.add_systems(Last, crate::hud::release_keys);
     if let Some(h) = hud {
@@ -708,6 +719,16 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if let Some(path) = config.weather_json {
         app.insert_resource(crate::vehicle::weather::Probe::new(path));
     }
+    if config.environment_json.is_some() || config.environment_time.is_some() {
+        app.insert_resource(crate::environment::Probe::new(
+            config.environment_json,
+            config.environment_time,
+            config.environment_flash,
+        ));
+    }
+    if config.screenshot.is_some() {
+        app.insert_resource(crate::environment::Gain(0.));
+    }
     if let Some(path) = config.smoke {
         let mut smoke = pickup::Smoke::new(path, config.screenshot);
         smoke.combat = config.combat_smoke;
@@ -743,6 +764,10 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         cpu_profile: None,
         environment_preview: None,
         weather_json: None,
+        environment: crate::environment::Options::default(),
+        environment_json: None,
+        environment_time: None,
+        environment_flash: false,
         camp: false,
         camera_orbit: None,
         player: false,
@@ -798,6 +823,27 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                 config.environment_preview = Some(value.clone());
             }
             "--vehicle-weather-json" => config.weather_json = Some(value.into()),
+            "--weather" => config.environment.preset = crate::environment::Preset::parse(value)?,
+            "--weather-quality" => {
+                config.environment.quality = crate::environment::Quality::parse(value)?
+            }
+            "--time-of-day" => config.environment.hour = Some(value.parse()?),
+            "--day-length" => config.environment.day_minutes = value.parse()?,
+            "--weather-json" => config.environment_json = Some(value.into()),
+            "--weather-time" => {
+                let t = value.parse::<f32>()?;
+                if !t.is_finite() || !(0.0..=600.).contains(&t) {
+                    return Err("--weather-time must be 0..600 seconds".into());
+                }
+                config.environment_time = Some(t);
+            }
+            "--weather-flash" => {
+                config.environment_flash = match value.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("--weather-flash: on or off".into()),
+                }
+            }
             "--player-json" => config.player_json = Some(value.into()),
             "--selection-smoke-json" => {
                 config.selection_smoke = Some(value.into());
@@ -950,6 +996,17 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if config.weather_json.is_some() && config.screenshot.is_none() {
         return Err("--vehicle-weather-json requires --screenshot".into());
     }
+    crate::environment::Options::from_json(&config.environment.json())?;
+    if (config.environment_json.is_some() || config.environment_time.is_some())
+        && config.screenshot.is_none()
+    {
+        return Err("weather snapshots require --screenshot".into());
+    }
+    if config.environment_flash
+        && (config.environment_time.is_none() || config.environment.preset.sample().thunder <= 0.05)
+    {
+        return Err("--weather-flash requires a fixed thunderstorm or hail snapshot".into());
+    }
     if (config.player_json.is_some()
         || config.player_seconds.is_some()
         || config.player_action != "idle")
@@ -966,6 +1023,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         (config.player_json.as_ref(), "json"),
         (config.cpu_profile.as_ref(), "json"),
         (config.weather_json.as_ref(), "json"),
+        (config.environment_json.as_ref(), "json"),
     ] {
         if let Some(path) = path {
             if path
@@ -1013,6 +1071,8 @@ pub(crate) fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut fonts: ResMut<Assets<Font>>,
+    environment: Option<Res<crate::environment::Options>>,
+    environment_probe: Option<Res<crate::environment::Probe>>,
     integrated: Option<Res<IntegratedSession>>,
     actor: Option<Res<player::Player>>,
     dynamic: (
@@ -1022,6 +1082,13 @@ pub(crate) fn setup(
 ) {
     let (vehicle, gate) = dynamic;
     let scene = preview.scene.take().expect("startup runs once");
+    let options = environment.map_or_else(crate::environment::Options::default, |o| o.clone());
+    let mut weather = crate::environment::Weather::new(&scene.daylight, &options);
+    if let Some(probe) = environment_probe {
+        weather.prepare_snapshot(&probe, &options, scene.focus);
+    }
+    commands.insert_resource(weather);
+    crate::environment::prepare_shelter(&mut commands, &scene);
     let conditions = crate::vehicle::weather::Conditions::from_source(&scene.daylight.source);
     let sun_intensity = conditions.sun();
     let ambient_intensity = conditions.ambient();
@@ -1071,6 +1138,7 @@ pub(crate) fn setup(
     let terrain_texture = images.add(scene.texture);
     commands.spawn((
         Name::new("Training terrain"),
+        crate::environment::ExposedSurface,
         Mesh3d(meshes.add(scene.terrain)),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(terrain_texture),
@@ -1094,6 +1162,7 @@ pub(crate) fn setup(
             .map(|part| {
                 let surface = part.surface();
                 let lamp = part.lamp;
+                let exposed = !part.glass && lamp.is_none();
                 let wiper = part.wiper.clone();
                 let beam_origins = if matches!(lamp, Some(crate::scene::LampRole::Head)) {
                     crate::vehicle::weather::lamp_centers(&part.mesh)
@@ -1118,6 +1187,7 @@ pub(crate) fn setup(
                     lamp,
                     wiper,
                     beam_origins,
+                    exposed,
                 )
             })
             .collect::<Vec<_>>();
@@ -1138,7 +1208,7 @@ pub(crate) fn setup(
                 ChildOf(root),
             ))
             .id();
-        for (name, mesh, material, lamp, wiper, beam_origins) in &models[&instance.path] {
+        for (name, mesh, material, lamp, wiper, beam_origins, exposed) in &models[&instance.path] {
             if !beam_origins.is_empty() {
                 crate::vehicle::weather::attach_beams(&mut commands, entity, beam_origins);
             }
@@ -1151,6 +1221,9 @@ pub(crate) fn setup(
             ));
             if let Some(role) = lamp {
                 part.insert(crate::vehicle::weather::Lamp(*role));
+            }
+            if *exposed {
+                part.insert(crate::environment::ExposedSurface);
             }
             if let Some(binding) = wiper {
                 part.insert(crate::vehicle::weather::Wiper(binding.clone()));
@@ -2341,6 +2414,7 @@ pub(crate) fn finish_setup(mut commands: Commands) {
 }
 #[allow(dead_code)] // Интерфейс используется бинарником shadow-game.
 pub(crate) fn cleanup(mut commands: Commands, roots: Query<Entity, With<player::SceneEntity>>) {
+    crate::environment::cleanup(&mut commands);
     for entity in &roots {
         commands.entity(entity).despawn();
     }

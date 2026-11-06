@@ -181,8 +181,6 @@ pub(crate) fn animate(
     mut wipers: Query<(&Wiper, &mut Transform)>,
     lamps: Query<(&Lamp, &MeshMaterial3d<StandardMaterial>)>,
     mut beams: Query<&mut SpotLight, With<Beam>>,
-    mut sun: Query<&mut DirectionalLight, With<MissionSun>>,
-    mut ambient: Query<&mut AmbientLight, With<crate::training::MapCamera>>,
     v: Option<Res<super::Vehicle>>,
     p: Option<Res<player::Player>>,
     inv: Option<Res<Inventory>>,
@@ -228,18 +226,6 @@ pub(crate) fn animate(
         let target = if conditions.dark() { 100_000. } else { 0. };
         if light.intensity != target {
             light.intensity = target;
-        }
-    }
-    for mut light in &mut sun {
-        let target = conditions.sun();
-        if light.illuminance != target {
-            light.illuminance = target;
-        }
-    }
-    for mut light in &mut ambient {
-        let target = conditions.ambient();
-        if light.brightness != target {
-            light.brightness = target;
         }
     }
 }

@@ -442,6 +442,7 @@ fn options(
         ("ЗВУК / ВИДЕО", "AUDIO / VIDEO", Action::AudioTab),
         ("МЫШЬ", "MOUSE", Action::MouseTab),
         ("КЛАВИШИ", "KEYBOARD", Action::KeyboardTab),
+        ("ПОГОДА", "WEATHER", Action::WeatherTab),
     ]
     .into_iter()
     .enumerate()
@@ -450,8 +451,8 @@ fn options(
             commands,
             parent,
             assets,
-            (22. + i as f32 * 153., 59.),
-            147.,
+            (22. + i as f32 * 122., 59.),
+            117.,
             (ru, en),
             action,
             i,
@@ -466,6 +467,12 @@ fn options(
         0 => &[Action::Language, Action::TextSize, Action::Background],
         1 => &[Action::Window, Action::Resolution, Action::MasterVolume],
         2 => &[Action::CameraSpeed, Action::EdgeScroll],
+        4 => &[
+            Action::WeatherPreset,
+            Action::WeatherQuality,
+            Action::WeatherHour,
+            Action::WeatherCycle,
+        ],
         _ => &[],
     };
     focus.0 = actions.first().copied().or(Some(Action::KeyboardTab));
@@ -474,11 +481,14 @@ fn options(
             commands,
             parent,
             assets,
-            (24., 114. + i as f32 * 50.),
+            (
+                24.,
+                114. + i as f32 * if navigation.options == 4 { 40. } else { 50. },
+            ),
             600.,
             ("", ""),
             action,
-            i + 4,
+            i + 5,
         );
     }
     match navigation.options {
@@ -534,6 +544,20 @@ fn options(
                 (
                     "1 / 2   — выбрать бойца       H — остановить\nS / C / P   — стоять / сидеть / лежать\nПробел   — инвентарь       T — слежение камерой\nNum 4 / 6 / 8 / 5   — перемещение камеры\nNum 1 / 3 / 7 / 9 — поворот; Num 0 / 2 — наклон\nNum + / −   — масштаб       E — выйти из машины\nСтрелки   — управление машиной\nEsc   — пауза / назад; Enter — выбор\n\nПереназначение клавиш ещё не реализовано.",
                     "1 / 2   — select mercenary       H — stop\nS / C / P   — stand / crouch / prone\nSpace   — inventory       T — track camera\nNum 4 / 6 / 8 / 5   — pan camera\nNum 1 / 3 / 7 / 9 — rotate; Num 0 / 2 — tilt\nNum + / −   — zoom       E — leave vehicle\nArrows   — drive vehicle\nEsc   — pause / back; Enter — select\n\nKey rebinding is not implemented yet.",
+                ),
+                12.,
+            );
+        }
+        4 => {
+            label(
+                commands,
+                parent,
+                assets,
+                (24., 300.),
+                (600., 30.),
+                (
+                    "Погода меняется плавно. Автоматическое качество учитывает видеокарту.",
+                    "Weather changes smoothly. Automatic quality adapts to the graphics device.",
                 ),
                 12.,
             );

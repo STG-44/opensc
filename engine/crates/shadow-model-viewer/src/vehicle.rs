@@ -98,6 +98,18 @@ pub struct Vehicle {
     triangles: Vec<[Vec3; 3]>,
 }
 impl Vehicle {
+    pub(crate) fn weather_shelter_height(&self, x: f32, z: f32) -> Option<f32> {
+        let origin = Vec3::new(x, self.position.y + 10., z);
+        let local = self.matrix().inverse().transform_point3(origin);
+        if !self.body.contains(local, 0.) {
+            return None;
+        }
+        self.triangles
+            .iter()
+            .filter_map(|t| crate::pickup::ray_triangle(local, Vec3::NEG_Y, *t))
+            .min_by(f32::total_cmp)
+            .map(|distance| origin.y - distance)
+    }
     pub fn prepare(catalog: &AssetCatalog, scene: &MapScene) -> Result<Self, Box<dyn Error>> {
         let path = "models/alvhqd-hummer/alvhqd-hummer.smf";
         let found: Vec<_> = scene

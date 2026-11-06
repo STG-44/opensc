@@ -14,6 +14,7 @@ pub struct Preferences {
     pub master_volume: f32,
     pub camera_speed: f32,
     pub edge_scroll: bool,
+    pub environment: crate::environment::Options,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -26,6 +27,7 @@ impl Default for Preferences {
             master_volume: 1.0,
             camera_speed: 1.0,
             edge_scroll: true,
+            environment: crate::environment::Options::default(),
         }
     }
 }
@@ -67,6 +69,7 @@ impl Preferences {
                 Ok(n)
             };
         Ok(Self {
+            environment: crate::environment::Options::from_json(&value["environment"])?,
             language,
             text_scale,
             window_size,
@@ -83,7 +86,7 @@ impl Preferences {
         })
     }
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({"version":1,"language":self.language.code(),"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background,"master_volume":self.master_volume,"camera_speed":self.camera_speed,"edge_scroll":self.edge_scroll})
+        serde_json::json!({"version":1,"language":self.language.code(),"fullscreen":self.fullscreen,"window_size":self.window_size,"text_scale":self.text_scale,"animate_background":self.animate_background,"master_volume":self.master_volume,"camera_speed":self.camera_speed,"edge_scroll":self.edge_scroll,"environment":self.environment.json()})
     }
     pub fn load(path: &Path) -> Result<Self, Box<dyn Error>> {
         if !path.exists() {
@@ -167,6 +170,7 @@ mod tests {
             master_volume: 0.5,
             camera_speed: 1.5,
             edge_scroll: false,
+            environment: crate::environment::Options::default(),
         };
         assert_eq!(Preferences::from_json(&p.json()).unwrap(), p);
         for (key, value) in [

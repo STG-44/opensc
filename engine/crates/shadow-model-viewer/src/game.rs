@@ -4,6 +4,7 @@ mod asset_mesh;
 mod body_carry;
 mod combat;
 mod daylight;
+mod environment;
 mod evacuation;
 mod fence;
 mod frontend;
@@ -49,6 +50,13 @@ fn main() {
             "--player"
                 | "--environment-preview"
                 | "--vehicle-weather-json"
+                | "--weather"
+                | "--weather-quality"
+                | "--time-of-day"
+                | "--day-length"
+                | "--weather-time"
+                | "--weather-json"
+                | "--weather-flash"
                 | "--cpu-profile-json"
                 | "--player-json"
                 | "--scene-json"

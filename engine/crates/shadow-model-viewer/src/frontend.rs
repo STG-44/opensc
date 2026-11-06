@@ -87,6 +87,11 @@ enum Action {
     AudioTab,
     MouseTab,
     KeyboardTab,
+    WeatherTab,
+    WeatherPreset,
+    WeatherQuality,
+    WeatherHour,
+    WeatherCycle,
     MasterVolume,
     CameraSpeed,
     EdgeScroll,
@@ -294,6 +299,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     .insert_resource(crate::localization::Language(saved.language))
     .add_plugins(crate::localization::LocalizationPlugin)
     .add_plugins(crate::vehicle::weather::EquipmentPlugin)
+    .insert_resource(saved.environment.clone())
+    .add_plugins(crate::environment::EnvironmentPlugin)
+    .insert_resource(crate::environment::Gain(saved.master_volume))
     .insert_resource(training::CameraOptions {
         speed: saved.camera_speed,
         edge_scroll: saved.edge_scroll,
@@ -476,7 +484,11 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 crate::evacuation::visuals,
             )
                 .chain(),
-            (crate::hud::diagnostics, training::orbit_camera).chain(),
+            (
+                crate::hud::diagnostics,
+                training::orbit_camera.in_set(training::CameraUpdate),
+            )
+                .chain(),
         )
             .chain()
             .run_if(in_state(Screen::Training))
@@ -821,7 +833,12 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
                     "audio-video" => 1,
                     "mouse" => 2,
                     "keyboard" => 3,
-                    _ => return Err("--options-tab: preferences|audio-video|mouse|keyboard".into()),
+                    "weather" => 4,
+                    _ => {
+                        return Err(
+                            "--options-tab: preferences|audio-video|mouse|keyboard|weather".into(),
+                        );
+                    }
                 }
             }
             "--campaign-tab" => {
@@ -1524,13 +1541,18 @@ fn handle_actions(
                 context.notice.clear();
                 next.set(Screen::Multiplayer);
             }
-            Action::DisplayTab | Action::AudioTab | Action::MouseTab | Action::KeyboardTab
+            Action::DisplayTab
+            | Action::AudioTab
+            | Action::MouseTab
+            | Action::KeyboardTab
+            | Action::WeatherTab
                 if *state.get() == Screen::Options =>
             {
                 navigation.options = match action {
                     Action::AudioTab => 1,
                     Action::MouseTab => 2,
                     Action::KeyboardTab => 3,
+                    Action::WeatherTab => 4,
                     _ => 0,
                 };
                 navigation.dirty = true;
@@ -1598,6 +1620,30 @@ fn handle_actions(
             Action::EdgeScroll if *state.get() == Screen::Options => {
                 context.draft.edge_scroll = !context.draft.edge_scroll
             }
+            Action::WeatherPreset if *state.get() == Screen::Options => {
+                context.draft.environment.preset = context.draft.environment.preset.next();
+            }
+            Action::WeatherQuality if *state.get() == Screen::Options => {
+                context.draft.environment.quality = context.draft.environment.quality.next();
+            }
+            Action::WeatherHour if *state.get() == Screen::Options => {
+                context.draft.environment.hour = match context.draft.environment.hour {
+                    None => Some(6.),
+                    Some(6.) => Some(12.),
+                    Some(12.) => Some(18.),
+                    Some(18.) => Some(0.),
+                    _ => None,
+                };
+            }
+            Action::WeatherCycle if *state.get() == Screen::Options => {
+                context.draft.environment.day_minutes = match context.draft.environment.day_minutes
+                {
+                    0. => 30.,
+                    30. => 60.,
+                    60. => 120.,
+                    _ => 0.,
+                };
+            }
             Action::Language if *state.get() == Screen::Options => {
                 if context.language_locked {
                     context.notice = "Язык выбирается в лаунчере.".into();
@@ -1634,6 +1680,9 @@ fn handle_actions(
                     Ok(()) => {
                         context.saved = context.draft.clone();
                         commands.insert_resource(context.saved.clone());
+                        commands.insert_resource(context.saved.environment.clone());
+                        commands
+                            .insert_resource(crate::environment::Gain(context.saved.master_volume));
                         commands.insert_resource(training::CameraOptions {
                             speed: context.saved.camera_speed,
                             edge_scroll: context.saved.edge_scroll,
@@ -1845,6 +1894,24 @@ fn update_captions(
             }
             Some(Action::Notice) => context.notice.clone(),
             Some(Action::Language) => format!("ЯЗЫК ИНТЕРФЕЙСА: {}", p.language.native_name()),
+            Some(Action::WeatherPreset) => format!("ПОГОДА: {}", p.environment.preset.label()),
+            Some(Action::WeatherQuality) => {
+                format!("КАЧЕСТВО ПОГОДЫ: {}", p.environment.quality.label())
+            }
+            Some(Action::WeatherHour) => format!(
+                "ВРЕМЯ СУТОК: {}",
+                p.environment
+                    .hour
+                    .map_or_else(|| "По сценарию".into(), |h| format!("{:02}:00", h as u32))
+            ),
+            Some(Action::WeatherCycle) => format!(
+                "СМЕНА ДНЯ И НОЧИ: {}",
+                if p.environment.day_minutes == 0. {
+                    "ВЫКЛ".into()
+                } else {
+                    format!("{:.0} мин.", p.environment.day_minutes)
+                }
+            ),
             Some(Action::MasterVolume) => {
                 format!(
                     "{}: {:.0}%",
@@ -2964,7 +3031,7 @@ mod tests {
                 assert_eq!(
                     app.world_mut().query::<&Choice>().iter(app.world()).count(),
                     match screen {
-                        Screen::Options => 9,
+                        Screen::Options => 10,
                         Screen::LoadGame | Screen::Quit => 2,
                         Screen::Multiplayer => 1,
                         _ => 7,
@@ -2978,7 +3045,7 @@ mod tests {
                 assert_eq!(
                     enabled,
                     match screen {
-                        Screen::Options => 9,
+                        Screen::Options => 10,
                         Screen::LoadGame | Screen::Quit => 2,
                         Screen::Multiplayer => 1,
                         _ => 7,

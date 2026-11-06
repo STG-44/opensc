@@ -4,6 +4,7 @@ mod asset_mesh;
 mod body_carry;
 mod combat;
 mod daylight;
+mod environment;
 mod evacuation;
 mod fence;
 mod gate;
