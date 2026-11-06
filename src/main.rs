@@ -137,6 +137,27 @@ fn run() -> Result<()> {
             } else {
                 None
             };
+            // An installed bootstrap must not read or rewrite a newer profile.
+            if let Ok(Some(prepared)) = self_update::cached(&root) {
+                let forwarded = data
+                    .as_deref()
+                    .map(|path| vec!["--data", path])
+                    .unwrap_or_default();
+                match prepared.start_with_args(&root, &forwarded) {
+                    Ok(mut handoff) => loop {
+                        match handoff.poll() {
+                            Ok(true) => return Ok(()),
+                            Ok(false) => std::thread::sleep(std::time::Duration::from_millis(25)),
+                            Err(error) => {
+                                handoff.cancel();
+                                eprintln!("Cached launcher did not start: {error:#}");
+                                break;
+                            }
+                        }
+                    },
+                    Err(error) => eprintln!("Cached launcher did not start: {error:#}"),
+                }
+            }
             let icon =
                 image::load_from_memory(include_bytes!("../assets/opensc.png"))?.into_rgba8();
             let icon = eframe::egui::IconData {

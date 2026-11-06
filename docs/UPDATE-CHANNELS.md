@@ -1,14 +1,17 @@
 # Launcher update policy and engine channels
 
-Launcher 0.4.2 checks for engine and signed launcher updates when opened and
-when Play is selected. It performs no periodic update requests while idle or
-while a game is running. Play checks the selected channel again, completes any
+The development launcher 0.4.3 checks for signed launcher and engine updates when
+opened and when Play is selected, and silently every five minutes while open.
+Unchanged background checks preserve ready text and keep Play available. Failures
+back off to ten, twenty and then thirty minutes. Launcher updates precede engine
+updates; a running game defers installation. See the [update lifecycle](LAUNCHER-UPDATES.md).
+Play checks the selected channel again, completes any
 engine update and only then starts the game. Failed or cancelled downloads keep
 the previous installation and wait for an explicit retry. When a pre-launch check fails, an already verified release of the selected channel can run offline. A recorded successful channel check allows reusing identical Stable/Test payloads. A release from a different unconfirmed channel is never used as an offline substitute.
 
 **Stable** is the default. **Test** is an explicit opt-in for new features.
 Changing the channel saves it immediately and clears the previous check result;
-it performs no network request until the next opening or game launch. Returning
+it performs no network request until the next scheduled check, opening or game launch. Returning
 to Stable can install an older stable version. Versioned engine packages,
 original data, overrides and game preferences remain separate.
 

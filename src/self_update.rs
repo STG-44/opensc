@@ -112,6 +112,42 @@ pub fn verify_index(bytes: &[u8], source: &Url) -> Result<Available> {
     verify(&index, source, PUBLIC_KEY)
 }
 
+/// Resolve a newer, signed cached launcher without networking or loading preferences.
+pub fn cached(root: &Path) -> Result<Option<Prepared>> {
+    cached_verified(root, env!("CARGO_PKG_VERSION"), PUBLIC_KEY)
+}
+
+fn cached_verified(root: &Path, current: &str, key: &[u8; 32]) -> Result<Option<Prepared>> {
+    let store = root.join("launcher-update");
+    let path = store.join("signed-index.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let Some(installed) = updater::Installed::load(&store)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(MAX_INDEX + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= MAX_INDEX as usize,
+        "Индекс лаунчера слишком большой"
+    );
+    let index: SignedIndex = serde_json::from_slice(&bytes)?;
+    let available = verify(&index, &installed.source, key)?;
+    if version(&available.release.version)? <= version(current)? || !updater::supported(&available)
+    {
+        return Ok(None);
+    }
+    ensure!(
+        installed.release.fingerprint()? == available.release.fingerprint()?,
+        "Кэш лаунчера не соответствует подписанному выпуску"
+    );
+    installed.verify(&store)?;
+    prepared(&available, &installed, &store).map(Some)
+}
+
 pub fn prepare(root: &Path, game_source: &str) -> Result<Option<Prepared>> {
     let source = Url::parse(game_source)?.join("/updates/launcher-v1.json")?;
     validate_source(&source)?;
@@ -169,21 +205,30 @@ fn prepare_verified(
     } else {
         updater::install(available, &store, &AtomicBool::new(false), |_| {})?
     };
+    let prepared = prepared(available, &installed, &store)?;
+    atomic_json(&store.join("signed-index.json"), index)?;
+    Ok(Some(prepared))
+}
+
+fn prepared(
+    available: &Available,
+    installed: &updater::Installed,
+    store: &Path,
+) -> Result<Prepared> {
     let platform = crate::platform();
     let file = available
         .release
         .files_for(&platform)
         .find(|file| file.executable)
         .context("Нет файла для этой платформы")?;
-    let executable = installed.directory(&store)?.join(&file.path);
+    let executable = installed.directory(store)?.join(&file.path);
     updater::verify_file(&executable, file.size, &file.sha256)?;
-    atomic_json(&store.join("signed-index.json"), index)?;
-    Ok(Some(Prepared {
+    Ok(Prepared {
         version: available.release.version.clone(),
         executable,
         size: file.size,
         sha256: file.sha256.clone(),
-    }))
+    })
 }
 
 fn token_path(root: &Path, token: &str) -> Result<PathBuf> {
@@ -206,6 +251,10 @@ pub fn signal_ready(root: &Path) -> Result<()> {
 }
 impl Prepared {
     pub fn start(self, root: &Path) -> Result<Handoff> {
+        self.start_with_args(root, &[])
+    }
+
+    pub fn start_with_args(self, root: &Path, args: &[&str]) -> Result<Handoff> {
         updater::verify_file(&self.executable, self.size, &self.sha256)?;
         let token = crate::reports::request_id();
         let ready = token_path(root, &token)?;
@@ -218,6 +267,7 @@ impl Prepared {
             .append(true)
             .open(root.join("launcher-update/launcher.log"))?;
         let child = Command::new(&self.executable)
+            .args(args)
             .env("OPENSC_HOME", root)
             .env("OPENSC_LAUNCHER_HANDOFF", &token)
             .stdin(Stdio::null())
@@ -325,20 +375,39 @@ mod tests {
         fs::write(directory.join(entry), binary).unwrap();
         fs::write(directory.join("THIRD-PARTY-NOTICES.txt"), notices).unwrap();
         atomic_json(&store.join("active.json"), &installed).unwrap();
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let payload = serde_json::to_string(
+            &serde_json::json!({"schema_version":1,"release":available.release}),
+        )
+        .unwrap();
+        let signature = key.sign(&[DOMAIN, payload.as_bytes()].concat());
         let index = SignedIndex {
             schema_version: 1,
-            payload: serde_json::to_string(
-                &serde_json::json!({"schema_version":1,"release":available.release}),
-            )
-            .unwrap(),
-            signature: "00".repeat(64),
+            payload,
+            signature: crate::manifest::hex(&signature.to_bytes()),
         };
         let prepared = prepare_verified(root, &available, &index, "0.4.1")
             .unwrap()
             .unwrap();
         assert_eq!(prepared.executable, directory.join(entry));
+        let offline = cached_verified(root, "0.4.1", &key.verifying_key().to_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(offline.executable, directory.join(entry));
+        assert!(
+            cached_verified(root, "0.5.0", &key.verifying_key().to_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cached_verified(root, "0.6.0", &key.verifying_key().to_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(cached(root).is_err());
         fs::write(directory.join(entry), b"damaged launcher").unwrap();
         assert!(prepare_verified(root, &available, &index, "0.4.1").is_err());
+        assert!(cached_verified(root, "0.4.1", &key.verifying_key().to_bytes()).is_err());
     }
 
     #[test]
@@ -359,7 +428,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("keep-settings"), b"user settings").unwrap();
         let executable = root.join("new launcher");
-        let script = "#!/bin/sh\nmkdir -p \"$OPENSC_HOME/launcher-update/handoff\"\nprintf '%s' '{\"version\":\"0.5.0\"}' > \"$OPENSC_HOME/launcher-update/handoff/$OPENSC_LAUNCHER_HANDOFF.json\"\nexec sleep 5\n";
+        let script = "#!/bin/sh\nmkdir -p \"$OPENSC_HOME/launcher-update/handoff\"\nprintf '%s\\n' \"$@\" > \"$OPENSC_HOME/received-args\"\nready=\"$OPENSC_HOME/launcher-update/handoff/$OPENSC_LAUNCHER_HANDOFF.json\"\nprintf '%s' '{\"version\":\"0.5.0\"}' > \"$ready.tmp\"\nmv \"$ready.tmp\" \"$ready\"\nexec sleep 5\n";
         fs::write(&executable, script).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let prepared = Prepared {
@@ -368,12 +437,18 @@ mod tests {
             size: script.len() as u64,
             sha256: crate::manifest::hex(&Sha256::digest(script.as_bytes())),
         };
-        let mut handoff = prepared.start(&root).unwrap();
+        let mut handoff = prepared
+            .start_with_args(&root, &["--data", "original path/игра"])
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while !handoff.poll().unwrap() {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(10));
         }
+        assert_eq!(
+            fs::read_to_string(root.join("received-args")).unwrap(),
+            "--data\noriginal path/игра\n"
+        );
         handoff.cancel();
         let script = "#!/bin/sh\nexit 7\n";
         fs::write(&executable, script).unwrap();

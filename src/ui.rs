@@ -28,6 +28,13 @@ const PLAY: Color32 = Color32::from_rgb(190, 65, 31);
 const MUTED: Color32 = Color32::from_rgb(161, 173, 163);
 const PANEL: Color32 = Color32::from_rgb(24, 31, 26);
 const BACKGROUND: Color32 = Color32::from_rgb(13, 18, 15);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const MAX_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+struct BackgroundCheck {
+    source: String,
+    result: Result<Option<Available>, String>,
+}
 
 enum Event {
     Checked(Result<Option<Available>, String>),
@@ -57,10 +64,15 @@ pub struct Launcher {
     importing: bool,
     hero: Option<egui::TextureHandle>,
     pending_play: bool,
+    engine_check_pending: bool,
+    background_receiver: Option<Receiver<BackgroundCheck>>,
+    next_update_check: Instant,
+    update_check_interval: Duration,
     blocked_update: Option<String>,
     download_started: Option<Instant>,
     reports: crate::report_ui::Form,
     launcher_receiver: Option<Receiver<Result<Option<self_update::Prepared>, String>>>,
+    launcher_check_quiet: bool,
     launcher_ready: Option<self_update::Prepared>,
     launcher_handoff: Option<self_update::Handoff>,
     launcher_status: String,
@@ -98,11 +110,14 @@ impl Launcher {
                     )
                 });
         let loaded = Config::load(&root);
-        let error = loaded.as_ref().err().map(|e| format!("{e:#}"));
+        let mut error = loaded.as_ref().err().map(|e| format!("{e:#}"));
         let mut config = loaded.unwrap_or_default();
         install_fonts(&cc.egui_ctx, config.language);
         if let Some(path) = data {
             config.data_path = path;
+            if let Err(save_error) = config.save(&root) {
+                error = Some(format!("{save_error:#}"));
+            }
         }
         let installed = Installed::load(&root);
         let error = error.or_else(|| installed.as_ref().err().map(|e| format!("{e:#}")));
@@ -125,15 +140,19 @@ impl Launcher {
             importing: false,
             hero,
             pending_play: false,
+            engine_check_pending: true,
+            background_receiver: None,
+            next_update_check: Instant::now() + UPDATE_CHECK_INTERVAL,
+            update_check_interval: UPDATE_CHECK_INTERVAL,
             blocked_update: None,
             download_started: None,
             reports,
             launcher_receiver: None,
+            launcher_check_quiet: false,
             launcher_ready: None,
             launcher_handoff: None,
             launcher_status: String::new(),
         };
-        launcher.check(&cc.egui_ctx);
         launcher.check_launcher(&cc.egui_ctx);
         if let Err(error) = self_update::signal_ready(&launcher.root) {
             launcher
@@ -144,13 +163,20 @@ impl Launcher {
     }
 
     fn check_launcher(&mut self, ctx: &egui::Context) {
+        self.start_launcher_check(ctx, false);
+    }
+
+    fn start_launcher_check(&mut self, ctx: &egui::Context, quiet: bool) {
         if self.launcher_receiver.is_some()
             || self.launcher_handoff.is_some()
             || self.child.is_some()
         {
             return;
         }
-        self.launcher_status = "Проверка обновления лаунчера…".into();
+        self.launcher_check_quiet = quiet;
+        if !quiet {
+            self.launcher_status = "Проверка обновления лаунчера…".into();
+        }
         let (tx, rx) = mpsc::channel();
         self.launcher_receiver = Some(rx);
         let (root, source, ctx) = (
@@ -178,12 +204,16 @@ impl Launcher {
                     self.launcher_ready = Some(prepared);
                 }
                 Ok(None) => {
-                    self.launcher_status =
-                        format!("Лаунчер {} · проверка завершена", env!("CARGO_PKG_VERSION"))
+                    if !self.launcher_check_quiet {
+                        self.launcher_status =
+                            format!("Лаунчер {} · проверка завершена", env!("CARGO_PKG_VERSION"));
+                    }
                 }
                 Err(error) => {
-                    self.launcher_status =
-                        "Обновление лаунчера отложено; текущая версия работает".into();
+                    if !self.launcher_check_quiet {
+                        self.launcher_status =
+                            "Обновление лаунчера отложено; текущая версия работает".into();
+                    }
                     self.activity.push(error);
                 }
             }
@@ -193,6 +223,7 @@ impl Launcher {
             match handoff.poll() {
                 Ok(true) => {
                     self.launcher_handoff = None;
+                    self.engine_check_pending = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 Ok(false) => {}
@@ -208,7 +239,6 @@ impl Launcher {
             && self.reports.can_restart()
             && let Some(prepared) = self.launcher_ready.take()
         {
-            self.save();
             match prepared.start(&self.root) {
                 Ok(handoff) => {
                     self.launcher_status = "Открывается новая версия лаунчера…".into();
@@ -217,10 +247,68 @@ impl Launcher {
                 Err(error) => self.launcher_status = format!("{error:#}"),
             }
         }
+        if self.engine_check_pending
+            && self.launcher_receiver.is_none()
+            && self.launcher_ready.is_none()
+            && self.launcher_handoff.is_none()
+        {
+            self.engine_check_pending = false;
+            self.check(ctx);
+        }
     }
 
     fn busy(&self) -> bool {
         self.receiver.is_some()
+    }
+
+    fn background_updates(&mut self, ctx: &egui::Context) {
+        if let Some(check) = self
+            .background_receiver
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        {
+            self.background_receiver = None;
+            if check.source == self.config.manifest_url {
+                match check.result {
+                    Ok(available) => {
+                        self.update_check_interval = UPDATE_CHECK_INTERVAL;
+                        self.available = available;
+                    }
+                    Err(error) => {
+                        self.update_check_interval =
+                            (self.update_check_interval * 2).min(MAX_UPDATE_CHECK_INTERVAL);
+                        if self.activity.last() != Some(&error) {
+                            self.activity.push(error);
+                            if self.activity.len() > 20 {
+                                self.activity.remove(0);
+                            }
+                        }
+                    }
+                }
+                self.next_update_check = Instant::now() + self.update_check_interval;
+            }
+        }
+        if Instant::now() < self.next_update_check
+            || self.background_receiver.is_some()
+            || self.busy()
+            || self.engine_check_pending
+            || self.pending_play
+            || self.launcher_handoff.is_some()
+            || self.launcher_ready.is_some()
+        {
+            return;
+        }
+        self.next_update_check = Instant::now() + self.update_check_interval;
+        let (tx, rx) = mpsc::channel();
+        self.background_receiver = Some(rx);
+        let source = self.config.manifest_url.clone();
+        let ctx = ctx.clone();
+        self.start_launcher_check(&ctx, true);
+        std::thread::spawn(move || {
+            let result = updater::check(&source).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(BackgroundCheck { source, result });
+            ctx.request_repaint();
+        });
     }
 
     fn save(&mut self) {
@@ -233,6 +321,8 @@ impl Launcher {
         if self.busy() {
             return;
         }
+        self.background_receiver = None;
+        self.next_update_check = Instant::now() + UPDATE_CHECK_INTERVAL;
         self.available = None;
         self.error = None;
         self.status = "Проверка обновлений…".into();
@@ -342,14 +432,28 @@ impl Launcher {
             return;
         };
         self.error = None;
+        self.cancel.store(false, Ordering::Relaxed);
+        let cancel = self.cancel.clone();
         self.status = "Проверка установленных файлов…".into();
         let root = self.root.clone();
         let (tx, rx) = mpsc::channel();
         self.receiver = Some(rx);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = installed.verify(&root).map_err(|e| format!("{e:#}"));
-            let _ = tx.send(Event::Verified(result));
+            if installed.verify(&root).is_ok() {
+                let _ = tx.send(Event::Verified(Ok(())));
+            } else {
+                let available = Available {
+                    source: installed.source,
+                    release: installed.release,
+                };
+                let result = updater::install(&available, &root, &cancel, |progress| {
+                    let _ = tx.send(Event::Progress(progress));
+                    ctx.request_repaint();
+                })
+                .map_err(|e| format!("{e:#}"));
+                let _ = tx.send(Event::Installed(result));
+            }
             ctx.request_repaint();
         });
     }
@@ -503,8 +607,13 @@ impl Launcher {
                 _ => {}
             }
         }
+        self.background_updates(ctx);
         self.auto_install(ctx);
         if self.inventory.is_none()
+            && !self.engine_check_pending
+            && self.launcher_receiver.is_none()
+            && self.launcher_ready.is_none()
+            && self.launcher_handoff.is_none()
             && !self.busy()
             && self.inspected_path.as_deref() != Some(self.config.data_path.as_str())
             && !self.config.data_path.trim().is_empty()
@@ -522,6 +631,10 @@ impl Launcher {
 
     fn auto_install(&mut self, ctx: &egui::Context) {
         if !self.busy()
+            && !self.engine_check_pending
+            && self.launcher_receiver.is_none()
+            && self.launcher_ready.is_none()
+            && self.launcher_handoff.is_none()
             && self.child.is_none()
             && self.available.as_ref().is_some_and(|available| {
                 self.needs_update(available)
@@ -578,6 +691,9 @@ impl Launcher {
             return;
         }
         self.config.set_channel(channel);
+        self.background_receiver = None;
+        self.next_update_check = Instant::now() + UPDATE_CHECK_INTERVAL;
+        self.update_check_interval = UPDATE_CHECK_INTERVAL;
         self.available = None;
         self.blocked_update = None;
         self.pending_play = false;
@@ -612,6 +728,8 @@ impl Launcher {
 
     fn request_play(&mut self, ctx: &egui::Context) {
         if self.busy()
+            || self.engine_check_pending
+            || (self.launcher_receiver.is_some() && !self.launcher_check_quiet)
             || self.pending_play
             || self.child.is_some()
             || self.launcher_handoff.is_some()
@@ -624,12 +742,16 @@ impl Launcher {
         }
         self.pending_play = true;
         self.blocked_update = None;
-        self.check(ctx);
+        self.engine_check_pending = true;
+        self.background_receiver = None;
+        self.launcher_check_quiet = false;
         self.check_launcher(ctx);
     }
 
     fn advance_play(&mut self) {
         if self.pending_play
+            && !self.engine_check_pending
+            && self.launcher_ready.is_none()
             && !self.busy()
             && self.launcher_receiver.is_none()
             && self.launcher_handoff.is_none()
@@ -780,7 +902,7 @@ impl Launcher {
                     .is_some_and(|a| self.needs_update(a));
                 let text = if self.child.is_some() {
                     "ИГРА ЗАПУЩЕНА"
-                } else if self.busy() || self.pending_play {
+                } else if self.busy() || self.pending_play || self.engine_check_pending {
                     if self.importing {
                         "ИМПОРТ…"
                     } else if self.progress.is_some() {
@@ -806,6 +928,8 @@ impl Launcher {
                     "ИГРАТЬ"
                 };
                 let can_click = !self.busy()
+                    && !self.engine_check_pending
+                    && (self.launcher_receiver.is_none() || self.launcher_check_quiet)
                     && !self.pending_play
                     && self.child.is_none()
                     && self.launcher_handoff.is_none();
@@ -827,7 +951,7 @@ impl Launcher {
                     self.request_play(ctx);
                 }
                 ui.label(
-                    RichText::new(tr("Проверка при открытии и перед игрой"))
+                    RichText::new(tr("Проверка каждые 5 минут и перед игрой"))
                         .size(10.0)
                         .color(MUTED),
                 );
@@ -972,7 +1096,7 @@ impl eframe::App for Launcher {
                         UpdateChannel::Stable => "Проверенные сборки. Рекомендуется для обычной игры.",
                         UpdateChannel::Test => "Новые возможности для тестирования. Возможны ошибки.",
                     })).small().color(MUTED));
-                    ui.label(RichText::new(tr("Выбор сохраняется автоматически. Обновления проверяются при открытии лаунчера и перед запуском игры.")).small().color(MUTED));
+                    ui.label(RichText::new(tr("Выбор сохраняется автоматически. Обновления проверяются при открытии, каждые 5 минут и перед игрой. Фоновая проверка проходит незаметно.")).small().color(MUTED));
                     ui.separator();
                     self.resource_card(ui, ctx);
                     ui.separator();
@@ -990,7 +1114,6 @@ impl eframe::App for Launcher {
             handoff.cancel();
         }
         self.cancel.store(true, Ordering::Relaxed);
-        self.save();
     }
 }
 

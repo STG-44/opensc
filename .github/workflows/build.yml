@@ -4,7 +4,9 @@ on:
   pull_request:
     paths: ["src/**", "engine/crates/shadow-formats/**", "engine/crates/opensc-localization/**", "engine/Cargo.toml", "third-party/**", ".gitattributes", "crates/report-protocol/**", "tests/**", "scripts/**", "Cargo.*", ".github/workflows/build.yml"]
   push:
+    branches: ["main"]
     tags: ["launcher-v*"]
+    paths: ["src/**", "engine/crates/shadow-formats/**", "engine/crates/opensc-localization/**", "engine/Cargo.toml", "third-party/**", ".gitattributes", "crates/report-protocol/**", "tests/**", "scripts/**", "Cargo.*", ".github/workflows/build.yml"]
 
 jobs:
   build:

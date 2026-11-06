@@ -11,7 +11,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -20,6 +20,7 @@ use url::Url;
 
 struct Server {
     url: Url,
+    requests: Arc<AtomicUsize>,
     done: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -34,10 +35,13 @@ impl Server {
         .unwrap();
         listener.set_nonblocking(true).unwrap();
         let done = Arc::new(AtomicBool::new(false));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
         let worker_done = done.clone();
         let worker = thread::spawn(move || {
             while !worker_done.load(Ordering::Relaxed) {
                 if let Ok((mut stream, _)) = listener.accept() {
+                    count.fetch_add(1, Ordering::Relaxed);
                     // BSD/macOS and Windows may inherit the listener's
                     // nonblocking mode; Linux accept() does not.
                     stream.set_nonblocking(false).unwrap();
@@ -86,6 +90,7 @@ impl Server {
         });
         Self {
             url,
+            requests,
             done,
             worker: Some(worker),
         }
@@ -308,6 +313,116 @@ fn installs_and_detects_local_file_corruption() {
     assert!(installed.verify(root.path()).is_err());
 }
 
+fn release_with_shared_asset(bytes: &[u8]) -> Release {
+    let mut release = release(bytes);
+    let mut asset = release.files[0].clone();
+    asset.path = "assets/shared.bin".into();
+    asset.url = "shared-asset".into();
+    asset.executable = false;
+    release.files.push(asset);
+    release
+}
+
+#[test]
+fn an_already_verified_install_does_not_download_again() {
+    let server = Server::new(b"engine".to_vec(), 200);
+    let available = Available {
+        source: server.url.clone(),
+        release: release(b"engine"),
+    };
+    let root = tempfile::tempdir().unwrap();
+    updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    assert_eq!(server.requests.load(Ordering::Relaxed), 1);
+    drop(server);
+    updater::install(&available, root.path(), &AtomicBool::new(false), |_| {})
+        .unwrap()
+        .verify(root.path())
+        .unwrap();
+}
+
+#[test]
+fn an_update_reuses_verified_assets_and_only_downloads_the_changed_engine() {
+    let old_server = Server::new(b"old-engine".to_vec(), 200);
+    let old = Available {
+        source: old_server.url.clone(),
+        release: release_with_shared_asset(b"old-engine"),
+    };
+    let root = tempfile::tempdir().unwrap();
+    let previous = updater::install(&old, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    let server = Server::new(b"new-engine".to_vec(), 200);
+    let mut next = old.clone();
+    next.source = server.url.clone();
+    next.release.version = "0.2.0-test".into();
+    next.release.files[0].sha256 = hex(&Sha256::digest(b"new-engine"));
+    let installed = updater::install(&next, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    installed.verify(root.path()).unwrap();
+    assert_eq!(server.requests.load(Ordering::Relaxed), 1);
+    let asset = installed
+        .directory(root.path())
+        .unwrap()
+        .join("assets/shared.bin");
+    fs::write(asset, b"local edit").unwrap();
+    previous.verify(root.path()).unwrap();
+}
+
+#[test]
+fn a_damaged_install_is_repaired_without_resetting_preferences_or_redownloading_good_files() {
+    let server = Server::new(b"engine".to_vec(), 200);
+    let available = Available {
+        source: server.url.clone(),
+        release: release_with_shared_asset(b"engine"),
+    };
+    let root = tempfile::tempdir().unwrap();
+    let installed =
+        updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    let directory = installed.directory(root.path()).unwrap();
+    fs::write(root.path().join("config.json"), b"preferences unchanged").unwrap();
+    fs::write(directory.join("bin/opensc-engine"), b"broken").unwrap();
+    updater::install(&available, root.path(), &AtomicBool::new(false), |_| {})
+        .unwrap()
+        .verify(root.path())
+        .unwrap();
+    assert_eq!(server.requests.load(Ordering::Relaxed), 3);
+    assert_eq!(
+        fs::read(root.path().join("config.json")).unwrap(),
+        b"preferences unchanged"
+    );
+    assert_eq!(
+        fs::read_dir(root.path().join("repair-backups"))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_failed_repair_keeps_the_existing_directory_and_active_pointer() {
+    let server = Server::new(b"engine".to_vec(), 200);
+    let available = Available {
+        source: server.url.clone(),
+        release: release_with_shared_asset(b"engine"),
+    };
+    let root = tempfile::tempdir().unwrap();
+    let installed =
+        updater::install(&available, root.path(), &AtomicBool::new(false), |_| {}).unwrap();
+    let directory = installed.directory(root.path()).unwrap();
+    fs::write(directory.join("bin/opensc-engine"), b"broken").unwrap();
+    let active = fs::read(root.path().join("active.json")).unwrap();
+    let bad_server = Server::new(b"bad!!!".to_vec(), 200);
+    let mut repair = available.clone();
+    repair.source = bad_server.url.clone();
+    assert!(updater::install(&repair, root.path(), &AtomicBool::new(false), |_| {}).is_err());
+    assert_eq!(
+        fs::read(directory.join("bin/opensc-engine")).unwrap(),
+        b"broken"
+    );
+    assert_eq!(
+        fs::read(directory.join("assets/shared.bin")).unwrap(),
+        b"engine"
+    );
+    assert_eq!(fs::read(root.path().join("active.json")).unwrap(), active);
+}
+
 #[test]
 fn damaged_download_keeps_previous_active_release() {
     let server = Server::new(b"good".to_vec(), 200);
@@ -322,6 +437,7 @@ fn damaged_download_keeps_previous_active_release() {
     let mut next = available.clone();
     next.source = bad_server.url.clone();
     next.release.version = "0.2.0-test".into();
+    next.release.files[0].sha256 = hex(&Sha256::digest(b"next"));
     assert!(updater::install(&next, root.path(), &AtomicBool::new(false), |_| {}).is_err());
     assert_eq!(before, fs::read(root.path().join("active.json")).unwrap());
     Installed::load(root.path())

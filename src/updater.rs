@@ -243,6 +243,22 @@ pub fn install(
         .open(root.join("update.lock"))?;
     lock.try_lock()
         .context("Другая копия лаунчера уже устанавливает обновление")?;
+    ensure!(!cancel.load(Ordering::Relaxed), "Установка отменена");
+    let installed = Installed {
+        schema_version: 1,
+        platform: platform.clone(),
+        source: available.source.clone(),
+        release: available.release.clone(),
+    };
+    let destination = installed.directory(root)?;
+    if installed.verify(root).is_ok() {
+        crate::config::atomic_json(&root.join("active.json"), &installed)?;
+        return Ok(installed);
+    }
+    let previous = Installed::load(root)
+        .ok()
+        .flatten()
+        .and_then(|old| old.directory(root).ok());
     let staging = tempfile::Builder::new()
         .prefix(".install-")
         .tempdir_in(root.join("versions"))?;
@@ -258,6 +274,26 @@ pub fn install(
         ensure!(!cancel.load(Ordering::Relaxed), "Установка отменена");
         let path = staging.path().join(&file.path);
         fs::create_dir_all(path.parent().context("Путь без родительской папки")?)?;
+        let reused = std::iter::once(destination.join(&file.path))
+            .chain(previous.as_ref().map(|dir| dir.join(&file.path)))
+            .find(|candidate| verify_file(candidate, file.size, &file.sha256).is_ok());
+        if let Some(source) = reused {
+            // Independent copies keep a future edit from changing an older release.
+            fs::copy(source, &path)?;
+            verify_file(&path, file.size, &file.sha256)?;
+            #[cfg(unix)]
+            if file.executable {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+            }
+            downloaded += file.size;
+            progress(Progress {
+                file: file.path.clone(),
+                downloaded,
+                total,
+            });
+            continue;
+        }
         let mut output = File::create(&path)?;
         let mut response = download(&client, file.download_url(&available.source)?, cancel)?;
         let mut size = 0u64;
@@ -307,18 +343,20 @@ pub fn install(
         });
     }
     ensure!(!cancel.load(Ordering::Relaxed), "Установка отменена");
-    let installed = Installed {
-        schema_version: 1,
-        platform,
-        source: available.source.clone(),
-        release: available.release.clone(),
-    };
-    let destination = installed.directory(root)?;
     if destination.exists() {
-        // Never replace an existing directory in place; active games can keep using it.
-        installed
-            .verify(root)
-            .context("Существующая сборка повреждена; убери её папку перед переустановкой")?;
+        // Only a completely verified staging directory can replace a damaged one.
+        let backups = root.join("repair-backups");
+        fs::create_dir_all(&backups)?;
+        let backup = tempfile::Builder::new()
+            .prefix("previous-")
+            .tempdir_in(backups)?;
+        let old = backup.path().join("version");
+        fs::rename(&destination, &old)?;
+        if let Err(error) = fs::rename(staging.path(), &destination) {
+            fs::rename(&old, &destination)?;
+            return Err(error.into());
+        }
+        let _ = backup.keep();
     } else {
         fs::rename(staging.path(), &destination)?;
     }

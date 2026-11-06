@@ -3,6 +3,16 @@
 OpenSC uses the website's test update channel. Engine and launcher versions
 are independent.
 
+## Launcher 0.4.3 — Unreleased
+
+- Preserve the selected channel, language and future preferences across restarts and launcher handoffs.
+- Open a verified newer cached launcher before reading the user profile, including offline starts.
+- Check the launcher before updating or starting the game.
+- Check silently every five minutes while open; back off to thirty minutes on failures without replacing ready text or disabling Play.
+- Reuse unchanged verified files across releases and repair damaged installations without resetting preferences.
+
+See [the update lifecycle](docs/LAUNCHER-UPDATES.md).
+
 ## Launcher 0.4.2 and engine 0.1.0-test.20261103.3 — 2026-11-03
 
 - Check updates on launcher opening and before Play, with no periodic polling.

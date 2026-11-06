@@ -4,7 +4,9 @@ on:
   pull_request:
     paths: ["engine/**", ".gitattributes", ".github/workflows/engine.yml"]
   push:
+    branches: ["main"]
     tags: ["engine-v*"]
+    paths: ["engine/**", ".gitattributes", ".github/workflows/engine.yml"]
 
 permissions:
   contents: read

@@ -3,6 +3,16 @@
 Keep original data separate from code and overrides, preserve native platform
 targets, and describe reconstructed behavior when the original rule is uncertain.
 
+## Repository workflow
+
+Owner-directed development is consolidated in `main`. Commit validated changes
+directly to `main`; do not keep a stack of long-lived working branches. Preserve
+in-progress checkpoints with an explicit status and validation limits. Automated
+launcher and engine checks run for relevant pushes to `main`.
+
+Original assets, private transfer archives and conversation exports must remain
+outside Git. Publishing source to GitHub does not promote a server update channel.
+
 ## Build and check
 
 The engine/launcher pin Rust 1.99; the server declares its own minimum version.

@@ -40,6 +40,8 @@ pub struct Config {
     pub channel: UpdateChannel,
     pub language: Locale,
     pub confirmed_releases: std::collections::BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for Config {
@@ -51,6 +53,7 @@ impl Default for Config {
             channel: UpdateChannel::Stable,
             language: Locale::Russian,
             confirmed_releases: Default::default(),
+            extra: Default::default(),
         }
     }
 }
@@ -87,6 +90,10 @@ impl Config {
         };
         let mut config: Self = serde_json::from_value(value.clone())
             .with_context(|| format!("Не удалось прочитать {}", path.display()))?;
+        // Older launchers retained the URL but removed the newer channel field.
+        if value.get("channel").is_none() && config.manifest_url == crate::TEST_MANIFEST {
+            config.channel = UpdateChannel::Test;
+        }
         if value.get("language").is_none()
             && let Ok(bytes) = fs::read(root.join("game/settings.json"))
             && let Ok(settings) = serde_json::from_slice::<serde_json::Value>(&bytes)
@@ -175,6 +182,58 @@ mod tests {
             Config::load(root.path()).unwrap().manifest_url,
             crate::DEFAULT_MANIFEST
         );
+    }
+
+    #[test]
+    fn legacy_test_manifest_recovers_the_channel_removed_by_an_old_launcher() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("config.json"),
+            serde_json::json!({
+                "manifest_url": crate::TEST_MANIFEST,
+                "data_path": "original",
+                "overrides_path": "mods"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let config = Config::load(root.path()).unwrap();
+        assert_eq!(config.channel, UpdateChannel::Test);
+        assert_eq!(config.manifest_url, crate::TEST_MANIFEST);
+        assert_eq!(config.data_path, "original");
+        assert_eq!(config.overrides_path, "mods");
+    }
+
+    #[test]
+    fn explicit_channel_takes_priority_over_a_legacy_manifest_url() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("config.json"),
+            serde_json::json!({"manifest_url": crate::TEST_MANIFEST, "channel": "stable"})
+                .to_string(),
+        )
+        .unwrap();
+        let config = Config::load(root.path()).unwrap();
+        assert_eq!(config.channel, UpdateChannel::Stable);
+        assert_eq!(config.manifest_url, crate::DEFAULT_MANIFEST);
+    }
+
+    #[test]
+    fn saving_retains_preferences_written_by_a_newer_launcher() {
+        let root = tempfile::tempdir().unwrap();
+        let future = serde_json::json!({"download_limit": 2048, "ui": {"scale": 1.5}});
+        fs::write(
+            root.path().join("config.json"),
+            serde_json::json!({"future_preferences": future}).to_string(),
+        )
+        .unwrap();
+        let mut config = Config::load(root.path()).unwrap();
+        config.set_channel(UpdateChannel::Test);
+        config.save(root.path()).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join("config.json")).unwrap()).unwrap();
+        assert_eq!(saved["future_preferences"], future);
+        assert_eq!(saved["channel"], "test");
     }
 
     #[test]

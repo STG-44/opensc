@@ -134,10 +134,15 @@ fn app(root: &Path, source: &str) -> Launcher {
         importing: false,
         hero: None,
         pending_play: false,
+        engine_check_pending: false,
+        background_receiver: None,
+        next_update_check: Instant::now() + UPDATE_CHECK_INTERVAL,
+        update_check_interval: UPDATE_CHECK_INTERVAL,
         blocked_update: None,
         download_started: None,
         reports: crate::report_ui::Form::default(),
         launcher_receiver: None,
+        launcher_check_quiet: false,
         launcher_ready: None,
         launcher_handoff: None,
         launcher_status: String::new(),
@@ -174,6 +179,131 @@ fn startup_checks_once_and_idle_does_not_fetch_later_publications() {
     assert_eq!(server.checks.load(Ordering::Relaxed), 1);
     assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
     assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-1");
+}
+
+#[test]
+fn startup_checks_the_launcher_before_requesting_or_installing_the_game() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.engine_check_pending = true;
+    app.check_launcher(&ctx);
+    assert!(!app.busy());
+    assert_eq!(server.checks.load(Ordering::Relaxed), 0);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 0);
+    settle(&mut app, &ctx);
+    assert!(!app.engine_check_pending);
+    assert_eq!(server.checks.load(Ordering::Relaxed), 1);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
+}
+
+fn settle_background(app: &mut Launcher, ctx: &egui::Context) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        app.tick(ctx);
+        app.poll_launcher(ctx);
+        let waiting_install = app.available.as_ref().is_some_and(|available| {
+            app.needs_update(available)
+                && app.blocked_update != available.release.fingerprint().ok()
+                && app.child.is_none()
+        });
+        if app.background_receiver.is_none()
+            && app.launcher_receiver.is_none()
+            && !app.busy()
+            && !waiting_install
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn an_unchanged_background_check_does_not_replace_ready_text_or_show_progress() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    ready_data(&mut app);
+    app.status = "Ready to play".into();
+    app.launcher_status = "Launcher ready".into();
+    app.next_update_check = Instant::now();
+    app.tick(&ctx);
+    assert!(app.background_receiver.is_some());
+    assert!(!app.busy());
+    assert!(app.launcher_check_quiet);
+    assert!(app.progress.is_none());
+    assert_eq!(app.status, "Ready to play");
+    settle_background(&mut app, &ctx);
+    assert_eq!(app.status, "Ready to play");
+    assert_eq!(app.launcher_status, "Launcher ready");
+    assert!(app.error.is_none() && app.progress.is_none());
+    assert_eq!(server.checks.load(Ordering::Relaxed), 2);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
+    assert_eq!(app.update_check_interval, Duration::from_secs(300));
+}
+
+#[test]
+fn background_failures_preserve_ready_state_and_back_off() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    ready_data(&mut app);
+    app.status = "Ready to play".into();
+    server.unavailable.store(true, Ordering::Relaxed);
+    app.next_update_check = Instant::now();
+    app.tick(&ctx);
+    settle_background(&mut app, &ctx);
+    assert_eq!(app.status, "Ready to play");
+    assert!(app.error.is_none() && app.progress.is_none());
+    assert_eq!(app.update_check_interval, Duration::from_secs(600));
+    for _ in 0..1000 {
+        app.tick(&ctx);
+    }
+    assert_eq!(server.checks.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn a_quiet_launcher_check_does_not_block_an_explicit_play_request() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    ready_data(&mut app);
+    let (tx, rx) = mpsc::channel();
+    app.launcher_receiver = Some(rx);
+    app.launcher_check_quiet = true;
+    app.request_play(&ctx);
+    assert!(app.pending_play && app.engine_check_pending);
+    tx.send(Ok(None)).unwrap();
+    settle(&mut app, &ctx);
+    assert_fixture_launch(&mut app);
+}
+
+#[test]
+fn a_background_publication_installs_only_after_the_launcher_check_finishes() {
+    let server = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = app(root.path(), &server.source);
+    app.check(&ctx);
+    settle(&mut app, &ctx);
+    server.release.lock().unwrap().version = "ui-test-2".into();
+    app.next_update_check = Instant::now();
+    app.tick(&ctx);
+    settle_background(&mut app, &ctx);
+    assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-2");
+    assert_eq!(server.checks.load(Ordering::Relaxed), 2);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
 }
 
 fn ready_data(app: &mut Launcher) {
@@ -225,7 +355,7 @@ fn play_rechecks_and_installs_latest_before_attempting_to_execute_it() {
     app.request_play(&ctx);
     settle(&mut app, &ctx);
     assert_eq!(server.checks.load(Ordering::Relaxed), 2);
-    assert_eq!(server.downloads.load(Ordering::Relaxed), 2);
+    assert_eq!(server.downloads.load(Ordering::Relaxed), 1);
     assert_eq!(app.installed.as_ref().unwrap().release.version, "ui-test-2");
     assert!(!app.pending_play);
     assert_fixture_launch(&mut app);
@@ -262,6 +392,28 @@ fn switching_channel_is_saved_without_a_network_check_or_install() {
     assert_eq!(
         Config::load(root.path()).unwrap().channel,
         UpdateChannel::Stable
+    );
+}
+
+#[test]
+fn closing_an_older_window_does_not_overwrite_newer_saved_preferences() {
+    let root = tempfile::tempdir().unwrap();
+    let mut older = app(root.path(), opensc_launcher::DEFAULT_MANIFEST);
+    older.config.save(root.path()).unwrap();
+
+    let mut newer = Config::load(root.path()).unwrap();
+    newer.set_channel(UpdateChannel::Test);
+    newer.language = Locale::English;
+    newer.data_path = "new original path".into();
+    newer.overrides_path = "new overrides path".into();
+    newer.save(root.path()).unwrap();
+    let saved = std::fs::read(root.path().join("config.json")).unwrap();
+
+    eframe::App::on_exit(&mut older, None);
+
+    assert_eq!(
+        std::fs::read(root.path().join("config.json")).unwrap(),
+        saved
     );
 }
 
