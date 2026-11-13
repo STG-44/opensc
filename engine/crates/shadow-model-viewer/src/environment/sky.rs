@@ -318,7 +318,15 @@ pub(super) fn update(
         fog.directional_light_color = Color::srgba(1., 0.9, 0.7, 0.12 * w.sample.sun);
         fog.falloff = FogFalloff::from_visibility(w.sample.visibility);
         ambient.color = Color::linear_rgb(0.65 + 0.35 * w.daylight, 0.75 + 0.25 * w.daylight, 1.);
-        ambient.brightness = 15. + w.daylight * (280. + (1. - w.sample.sun) * 250.);
+        let overcast = 1. - w.sample.sun;
+        let sky_fill = if quality == Quality::Low {
+            // Low lacks an atmosphere environment map. Calibrate the extra
+            // fill at noon and scale it with exposure to avoid a twilight peak.
+            (7_200. + overcast * 1_350.) * (target_exposure - 13.).exp2()
+        } else {
+            0.
+        };
+        ambient.brightness = 15. + w.daylight * (280. + overcast * 250. + sky_fill);
         if let Some(mut m) = materials.get_mut(&v.material) {
             m.data = uniform(&w, camera.translation);
         }

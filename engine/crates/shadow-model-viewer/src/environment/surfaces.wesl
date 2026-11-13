@@ -7,12 +7,28 @@ import bevy_pbr::render::{forward_io::{VertexOutput,FragmentOutput},pbr_function
 fn grain(p:vec3<f32>)->f32 {
     return fract(sin(dot(p,vec3(12.9898,78.233,43.157)))*43758.5453);
 }
+fn coverage_noise(p:vec3<f32>)->f32 {
+    let cell = floor(p);
+    let fraction = fract(p);
+    let blend = fraction * fraction * (3.0 - 2.0 * fraction);
+    let lower = mix(
+        mix(grain(cell), grain(cell + vec3(1.0,0.0,0.0)), blend.x),
+        mix(grain(cell + vec3(0.0,0.0,1.0)), grain(cell + vec3(1.0,0.0,1.0)), blend.x),
+        blend.z,
+    );
+    let upper = mix(
+        mix(grain(cell + vec3(0.0,1.0,0.0)), grain(cell + vec3(1.0,1.0,0.0)), blend.x),
+        mix(grain(cell + vec3(0.0,1.0,1.0)), grain(cell + vec3(1.0,1.0,1.0)), blend.x),
+        blend.z,
+    );
+    return mix(lower, upper, blend.y);
+}
 @fragment
 fn fragment(mesh:VertexOutput,@builtin(front_facing) front:bool)->FragmentOutput {
     var pbr=pbr_input_from_standard_material(mesh,front);
     pbr.material.base_color=alpha_discard(pbr.material.flags,pbr.material.alpha_cutoff,pbr.material.base_color);
     let up=clamp(pbr.world_normal.y,0.0,1.0);
-    let large=grain(floor(mesh.world_position.xyz*0.38));
+    let large=coverage_noise(mesh.world_position.xyz*0.38);
     let fine=grain(floor(mesh.world_position.xyz*130.0));
     let wet=weather.x*smoothstep(0.0,0.65,up);
     let snow=weather.y*smoothstep(0.34,0.85,up)*smoothstep(large*0.5,0.5+large*0.5,weather.y);

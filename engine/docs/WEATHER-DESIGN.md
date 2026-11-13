@@ -1,9 +1,9 @@
 # Sky and weather presentation
 
-Status: work in progress, preserved from the 2026-11-06 transfer. This source
-checkpoint is not part of the published Test package. Low-quality ambient
-lighting, the full native weather matrix and final workspace checks still need
-validation before a weather release.
+Weather remains in development after the published Test package. Native checks
+on macOS with a Radeon Pro 555X covered clear daylight and night in Low, clear
+daylight in Medium, fog in High, and rain, snow and thunderstorms in Low. A weather
+release still needs coverage across the full set of presets and quality levels.
 
 The weather system runs locally after the frozen 2026-11-05 Test candidate.
 Its rendering must remain independent of map dimensions and preserve original
@@ -29,11 +29,11 @@ sunlight remains the initial reference; explicit time overrides are presentation
 settings. Weather settings live outside the original installation.
 
 Medium/high quality use Bevy's atmospheric scattering lookup tables. Low quality
-provides an analytic sky and fewer cloud/precipitation samples. Cloud layers use
-an embedded shader; rain and snow use bounded reusable local pools rather than
-one entity for every drop or a particle volume covering the whole map. Expensive
-surface changes are throttled. Lightning uses a bounded flash envelope, with
-thunder delayed according to strike distance.
+provides an analytic sky, exposure-scaled ambient daylight and fewer cloud and
+precipitation samples. Cloud layers use an embedded shader. Rain and snow use
+bounded, reusable particle pools near the camera. Expensive surface changes are
+throttled. Lightning uses a bounded flash envelope, with thunder delayed
+according to strike distance.
 
 The initial performance target is older discrete GPUs including the reported
 Radeon 555X/8870M. Software rendering supplies correctness screenshots only;
