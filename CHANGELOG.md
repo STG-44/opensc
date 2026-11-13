@@ -3,7 +3,7 @@
 OpenSC uses the website's test update channel. Engine and launcher versions
 are independent.
 
-## Launcher 0.4.3 — Unreleased
+## Launcher 0.4.3 — 2026-11-13
 
 - Preserve the selected channel, language and future preferences across restarts and launcher handoffs.
 - Open a verified newer cached launcher before reading the user profile, including offline starts.
@@ -12,6 +12,12 @@ are independent.
 - Reuse unchanged verified files across releases and repair damaged installations without resetting preferences.
 
 See [the update lifecycle](docs/LAUNCHER-UPDATES.md).
+
+## Engine 0.1.0-test.20261113.1 — 2026-11-13
+
+- Preview weather, time of day, and quality settings in the Test channel.
+- Improve daylight fill on Low so shaded vehicles retain visible detail.
+- Smooth snow coverage and wet surfaces.
 
 ## Launcher 0.4.2 and engine 0.1.0-test.20261103.3 — 2026-11-03
 
