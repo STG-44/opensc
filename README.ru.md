@@ -87,7 +87,7 @@ Workflow `.github/workflows/build.yml` запускает тесты и созд
 | CachyOS / Arch Linux x64 | `.pkg.tar.zst` для pacman | AppImage, tar.gz |
 | Современный Linux x64 | AppImage | DEB для Debian/Ubuntu, tar.gz |
 
-Минимум для готовых Linux-сборок — glibc 2.39; графические библиотеки X11/Wayland и OpenGL должны быть установлены. AppImage может потребовать FUSE 2; режим `--appimage-extract-and-run` работает без FUSE. Для CachyOS: `sudo pacman -U opensc-launcher-0.4.1-linux-x86_64.pkg.tar.zst`. Пакет называется `opensc-launcher`, чтобы не пересекаться с системным пакетом OpenSC для смарт-карт.
+Минимум для готовых Linux-сборок — glibc 2.39; графические библиотеки X11/Wayland и OpenGL должны быть установлены. AppImage может потребовать FUSE 2; режим `--appimage-extract-and-run` работает без FUSE. Для CachyOS установите скачанный пакет командой `sudo pacman -U ./имя-скачанного-пакета.pkg.tar.zst` (подставьте фактическое имя файла). Пакет называется `opensc-launcher`, чтобы не пересекаться с системным пакетом OpenSC для смарт-карт.
 
 Локальная упаковка готового исполняемого файла:
 
