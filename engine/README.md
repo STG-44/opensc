@@ -6,10 +6,9 @@ Company: Left for Dead resources and optional replacement assets.
 [Project](../README.md) · [Contributing](../CONTRIBUTING.md) ·
 [Tactical systems](docs/TACTICAL-SYSTEMS.md) · [World rendering](docs/RENDERING.md) · [Русский](README.ru.md)
 
-The current gameplay development branch is
-[`codex/original-inventory`](https://github.com/STG-44/opensc/tree/codex/original-inventory)
-([PR #2](https://github.com/STG-44/opensc/pull/2)). Switch to that branch before
-building the latest test runtime.
+Current gameplay development is consolidated in
+[`main`](https://github.com/STG-44/opensc/tree/main). Use that branch to build
+the latest test runtime.
 
 The workspace pins **Rust 1.99.0** and **Bevy 0.20.0**. Its current playable
 scope is the training mission: the original map, characters, animation,
@@ -21,7 +20,7 @@ campaign is still in development.
 From the repository root with the pinned Rust toolchain installed:
 
 ```sh
-git switch codex/launcher-channels
+git switch main
 cargo run --manifest-path engine/Cargo.toml --locked \
   -p shadow-model-viewer --bin shadow-game -- \
   --game-dir "/path/to/Shadow Company"
