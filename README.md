@@ -10,9 +10,8 @@ resources and supports replacement assets through the same catalog.
 **Status:** a playable training prototype. The complete campaign and full
 compatibility with the original executable are still in development. You need
 your own original game installation or disc image; original archives are not
-included in engine updates. Current gameplay work is tracked in
-[PR #2](https://github.com/STG-44/opensc/pull/2); see the engine guide before
-building the active development branch.
+included in engine updates. Gameplay development is consolidated in [`main`](https://github.com/STG-44/opensc/tree/main);
+see the [engine guide](engine/README.md) for current build instructions.
 
 ## Play
 
@@ -21,9 +20,11 @@ building the active development branch.
    copied automatically into OpenSC's managed library.
 3. Let the launcher install the engine, then select **Play → Training**.
 
-Launcher **0.4.2** checks for updates when opened and before Play. Stable is the default; the selected Stable/Test channel and shared game language are saved automatically. Game data, settings
-and overrides stay separate from versioned engine installations. Launcher
-self-updates use a signed channel; older launchers may need one manual upgrade.
+Launcher **0.4.3** checks for updates on startup, before Play, and silently every
+five minutes while open. Stable is the default; the selected Stable/Test channel
+and shared game language are saved automatically. Game data, settings and
+overrides stay separate from versioned engine installations. Launcher
+self-updates use signed releases; older launchers may need one manual upgrade.
 [Import details — Russian](docs/IMPORTING-RU.md) · [Update channels](docs/UPDATE-CHANNELS.md) · [Languages](docs/LOCALIZATION.md).
 
 ## Current features
