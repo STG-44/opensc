@@ -3,6 +3,11 @@
 OpenSC uses the website's test update channel. Engine and launcher versions
 are independent.
 
+## Engine 0.1.0-test.20261124.1 — 2026-11-24
+
+- Press F6 during training to open controls for weather and time of day.
+- Blend dense fog into the sky at the horizon.
+
 ## Launcher 0.4.3 — 2026-11-13
 
 - Preserve the selected channel, language and future preferences across restarts and launcher handoffs.
