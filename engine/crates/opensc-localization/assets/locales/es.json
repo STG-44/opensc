@@ -795,5 +795,10 @@
   "число кадров портрета не совпадает с описанием": "el número de marcos de retratos no coincide con la descripción",
   "экипировка должна готовиться до создания сцены": "el equipo debe estar preparado antes de crear la escena",
   "экипировка кусачек не поддерживается": "El equipo cortador de alambre no es compatible",
-  "язык должен быть ru или en": "el idioma debe ser ru o en"
+  "язык должен быть ru или en": "el idioma debe ser ru o en",
+  "сменить погоду": "cambiar el tiempo",
+  "время +1 ч": "hora +1 h",
+  "назад": "hacia atrás",
+  "остановить / запустить часы": "detener / reanudar el reloj",
+  "исходные настройки": "ajustes iniciales"
 }

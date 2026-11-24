@@ -554,10 +554,10 @@ fn options(
                 parent,
                 assets,
                 (24., 300.),
-                (600., 30.),
+                (600., 46.),
                 (
-                    "Погода меняется плавно. Автоматическое качество учитывает видеокарту.",
-                    "Weather changes smoothly. Automatic quality adapts to the graphics device.",
+                    "Погода меняется плавно. Автоматическое качество учитывает видеокарту.\nF6 — ПОГОДА",
+                    "Weather changes smoothly. Automatic quality adapts to the graphics device.\nF6 — WEATHER",
                 ),
                 12.,
             );

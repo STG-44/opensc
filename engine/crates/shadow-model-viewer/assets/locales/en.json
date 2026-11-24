@@ -191,5 +191,10 @@
   "патронов": "rounds",
   "пауза": "paused",
   "треугольников": "triangles",
-  "управление камерой": "camera controls"
+  "управление камерой": "camera controls",
+  "сменить погоду": "change weather",
+  "время +1 ч": "time +1 h",
+  "назад": "backwards",
+  "остановить / запустить часы": "freeze / resume clock",
+  "исходные настройки": "initial settings"
 }

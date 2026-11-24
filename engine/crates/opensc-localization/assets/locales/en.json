@@ -795,5 +795,10 @@
   "число кадров портрета не совпадает с описанием": "number of portrait frames does not match the description",
   "экипировка должна готовиться до создания сцены": "equipment must be prepared before creating the scene",
   "экипировка кусачек не поддерживается": "wire cutter equipment is not supported",
-  "язык должен быть ru или en": "language must be ru or en"
+  "язык должен быть ru или en": "language must be ru or en",
+  "сменить погоду": "change weather",
+  "время +1 ч": "time +1 h",
+  "назад": "backwards",
+  "остановить / запустить часы": "freeze / resume clock",
+  "исходные настройки": "initial settings"
 }

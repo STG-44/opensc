@@ -220,6 +220,7 @@ pub(super) fn initialize(
             quality: w.quality,
             software,
         });
+        commands.insert_resource(super::debug::Controls::new(&options));
     }
 }
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]

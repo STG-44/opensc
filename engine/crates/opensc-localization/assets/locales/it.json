@@ -795,5 +795,10 @@
   "число кадров портрета не совпадает с описанием": "il numero di cornici per ritratti non corrisponde alla descrizione",
   "экипировка должна готовиться до создания сцены": "l'attrezzatura deve essere preparata prima di creare la scena",
   "экипировка кусачек не поддерживается": "l'attrezzatura tagliafili non è supportata\nLa lingua",
-  "язык должен быть ru или en": "deve essere ru o en"
+  "язык должен быть ru или en": "deve essere ru o en",
+  "сменить погоду": "cambia meteo",
+  "время +1 ч": "ora +1 h",
+  "назад": "indietro",
+  "остановить / запустить часы": "ferma / riprendi orologio",
+  "исходные настройки": "impostazioni iniziali"
 }

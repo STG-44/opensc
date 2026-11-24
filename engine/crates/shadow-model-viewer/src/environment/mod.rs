@@ -2,6 +2,7 @@
 use crate::{daylight, inventory::Inventory, player, training, tutorial::Tutorial};
 use bevy::prelude::*;
 mod audio;
+mod debug;
 mod diagnostics;
 mod particles;
 pub(crate) mod profile;
@@ -40,12 +41,14 @@ impl Plugin for EnvironmentPlugin {
                 Update,
                 (
                     sky::initialize,
+                    debug::input,
                     control,
                     sky::update,
                     particles::update,
                     surfaces::update,
                     audio::update,
                     diagnostics::probe,
+                    debug::panel,
                 )
                     .chain()
                     .after(training::CameraUpdate)
@@ -63,7 +66,7 @@ pub(crate) struct Weather {
     selected: Preset,
     pub quality: Quality,
     pub elapsed: f64,
-    clock_elapsed: f64,
+    clock_hours: f64,
     clock_options: (Option<f32>, f32),
     initial_hour: f32,
     pub hour: f32,
@@ -110,7 +113,7 @@ impl Weather {
             selected: options.preset,
             quality: options.quality,
             elapsed: 0.,
-            clock_elapsed: 0.,
+            clock_hours: 0.,
             clock_options: (options.hour, options.day_minutes),
             initial_hour,
             hour: initial_hour,
@@ -135,7 +138,7 @@ impl Weather {
             paused: false,
             legacy_preview: preview,
         };
-        result.light(options);
+        result.light(options, 0.);
         result
     }
     pub fn prepare_snapshot(&mut self, probe: &Probe, options: &Options, focus: Vec3) {
@@ -155,22 +158,20 @@ impl Weather {
             }
         }
     }
-    fn light(&mut self, options: &Options) {
+    fn light(&mut self, options: &Options, dt: f32) {
         if self.clock_options != (options.hour, options.day_minutes) {
             self.clock_options = (options.hour, options.day_minutes);
-            self.clock_elapsed = 0.;
+            self.clock_hours = 0.;
+        }
+        if options.day_minutes > 0. {
+            self.clock_hours += f64::from(dt) * 24. / (f64::from(options.day_minutes) * 60.);
         }
         let legacy_hour = self
             .legacy_preview
             .as_deref()
             .map(|p| if p.starts_with("night-") { 0. } else { 12. });
         let start = options.hour.or(legacy_hour).unwrap_or(self.initial_hour);
-        let delta = if options.day_minutes > 0. {
-            self.clock_elapsed as f32 * 24. / (options.day_minutes * 60.)
-        } else {
-            0.
-        };
-        self.hour = (start + delta).rem_euclid(24.);
+        self.hour = (start + self.clock_hours as f32).rem_euclid(24.);
         if let Some(tables) = &self.tables {
             let (direction, color) = tables
                 .sample(self.hour)
@@ -198,6 +199,13 @@ impl Weather {
         self.rng ^= self.rng << 5;
         self.rng as f32 / u32::MAX as f32
     }
+    fn set_debug_preset(&mut self, preset: Preset) {
+        self.selected = preset;
+        self.sample = preset.sample();
+        self.from = self.sample;
+        self.target = self.sample;
+        self.transition = 1.;
+    }
     fn advance(&mut self, dt: f32, options: &Options, focus: Vec3) {
         if self.selected != options.preset {
             self.from = self.sample;
@@ -210,7 +218,6 @@ impl Weather {
             .from
             .blend(self.target, smooth(0., 1., self.transition));
         self.elapsed += f64::from(dt);
-        self.clock_elapsed += f64::from(dt);
         self.wetness = (self.wetness
             + dt * (self.sample.rain * 0.05 + self.sample.hail * 0.01 - self.sample.sun * 0.0015))
             .clamp(0., 1.);
@@ -218,7 +225,7 @@ impl Weather {
             + dt * (self.sample.snow * 0.004
                 - ((self.sample.temperature - 1.).max(0.) * 0.0004 + self.sample.rain * 0.002)))
             .clamp(0., 1.);
-        self.light(options);
+        self.light(options, dt);
         self.lightning_age += dt;
         self.flash = flash_envelope(self.lightning_age) * self.sample.thunder;
         if let Some(delay) = &mut self.thunder_delay {
@@ -292,6 +299,7 @@ fn control(
 }
 
 pub(crate) fn cleanup(commands: &mut Commands) {
+    commands.queue(debug::cleanup);
     commands.remove_resource::<Weather>();
     commands.remove_resource::<sky::Visuals>();
     commands.remove_resource::<particles::Particles>();

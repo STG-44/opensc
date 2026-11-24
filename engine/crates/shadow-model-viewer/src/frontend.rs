@@ -1366,6 +1366,7 @@ fn spawn_pause(
     );
 }
 fn start_loading(mut commands: Commands, context: Res<Context>) {
+    commands.insert_resource(context.saved.environment.clone());
     let catalog = context.catalog.clone();
     commands.insert_resource(Loading(AsyncComputeTaskPool::get().spawn(async move {
         training::prepare_session(&catalog).map_err(|e| e.to_string())

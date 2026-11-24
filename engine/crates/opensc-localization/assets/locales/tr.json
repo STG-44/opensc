@@ -795,5 +795,10 @@
   "число кадров портрета не совпадает с описанием": "sayıda portre karesi açıklamayla eşleşmiyor",
   "экипировка должна готовиться до создания сцены": "ekipman sahneyi oluşturmadan önce hazırlanmalıdır",
   "экипировка кусачек не поддерживается": "tel kesici ekipman desteklenmiyor",
-  "язык должен быть ru или en": "dil ru veya en olmalıdır"
+  "язык должен быть ru или en": "dil ru veya en olmalıdır",
+  "сменить погоду": "havayı değiştir",
+  "время +1 ч": "saat +1 sa.",
+  "назад": "geri",
+  "остановить / запустить часы": "saati durdur / sürdür",
+  "исходные настройки": "başlangıç ayarları"
 }

@@ -1302,6 +1302,7 @@ pub(crate) fn setup(
     if integrated.is_some() {
         label = label.replace("Ctrl+P / Esc — пауза", "Ctrl+P — пауза\nEsc — меню");
     }
+    label.push_str("\nF6 — ПОГОДА");
     let mut label_entity = commands.spawn((
         player::SceneEntity,
         UiTargetCamera(camera),

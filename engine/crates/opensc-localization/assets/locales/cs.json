@@ -795,5 +795,10 @@
   "число кадров портрета не совпадает с описанием": "Počet snímků portrétu neodpovídá popisu",
   "экипировка должна готовиться до создания сцены": "Vybavení se musí připravit před vytvořením scény",
   "экипировка кусачек не поддерживается": "Toto vybavení kleštěmi není podporováno",
-  "язык должен быть ru или en": "Jazyk musí být ru nebo en"
+  "язык должен быть ru или en": "Jazyk musí být ru nebo en",
+  "сменить погоду": "změnit počasí",
+  "время +1 ч": "čas +1 h",
+  "назад": "zpět",
+  "остановить / запустить часы": "zastavit / spustit hodiny",
+  "исходные настройки": "počáteční nastavení"
 }

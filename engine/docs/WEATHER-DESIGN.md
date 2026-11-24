@@ -35,6 +35,18 @@ bounded, reusable particle pools near the camera. Expensive surface changes are
 throttled. Lightning uses a bounded flash envelope, with thunder delayed
 according to strike distance.
 
+The sky dome integrates ground haze using the camera's fog color and extinction.
+The optical path grows toward the horizon, blending the atmosphere background
+into distant terrain in fog and dust.
+
+During training, F6 opens the weather debug panel. F7 cycles weather presets and
+F8 moves the displayed time forward by one hour. Shift reverses F7 and F8. F4
+freezes or resumes the clock from its displayed time. Shift+F6 restores the options
+used at the start of training. Debug changes last for the current session. Use
+the Weather tab in the options menu to save preferences. Debug presets apply
+immediately. Changes through the options menu blend over 12 seconds, and the
+default full day lasts 120 real minutes.
+
 The initial performance target is older discrete GPUs including the reported
 Radeon 555X/8870M. Software rendering supplies correctness screenshots only;
 hardware performance claims require measurements on those devices. The design

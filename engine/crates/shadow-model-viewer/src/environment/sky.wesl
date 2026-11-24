@@ -1,4 +1,6 @@
 import bevy_pbr::render::forward_io::VertexOutput;
+@if(DISTANCE_FOG)
+import bevy_pbr::render::mesh_view_bindings::fog;
 
 struct Sky {
     camera_flash:vec4<f32>, sun_day:vec4<f32>, cloud:vec4<f32>,
@@ -67,6 +69,15 @@ fn fragment(mesh:VertexOutput)->@location(0) vec4<f32> {
     let low=sky.settings.y;
     let extra_alpha=clamp(star+moon+halo,0.0,1.0);
     let alpha=1.0-transmission+transmission*mix(extra_alpha,1.0,low);
-    let color=radiance+transmission*(extras+background*low);
-    return vec4(color,alpha);
+    var color=radiance+transmission*(extras+background*low);
+    var opacity=alpha;
+    @if(DISTANCE_FOG) {
+        // Integrate a shallow ground haze layer along the sky ray. Use the
+        // scene's fog color and extinction so its horizon meets distant terrain.
+        let fog_distance=20.0/max(ray.y,0.005);
+        let haze=1.0-exp(-fog.be.x*fog_distance);
+        color=mix(color,fog.base_color.rgb,haze);
+        opacity=mix(opacity,1.0,haze);
+    }
+    return vec4(color,opacity);
 }
