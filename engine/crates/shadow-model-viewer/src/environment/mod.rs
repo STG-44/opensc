@@ -43,6 +43,7 @@ impl Plugin for EnvironmentPlugin {
                     sky::initialize,
                     debug::input,
                     control,
+                    crate::hud::clock,
                     sky::update,
                     particles::update,
                     surfaces::update,
@@ -56,6 +57,9 @@ impl Plugin for EnvironmentPlugin {
             );
     }
 }
+
+#[derive(Resource)]
+pub(crate) struct MenuPaused;
 
 #[derive(Resource)]
 pub(crate) struct Weather {
@@ -86,7 +90,6 @@ pub(crate) struct Weather {
     thunder_delay: Option<f32>,
     rng: u32,
     tables: Option<daylight::Tables>,
-    fallback_sun: Vec3,
     pub fixed_time: Option<f32>,
     pub paused: bool,
     legacy_preview: Option<String>,
@@ -96,7 +99,10 @@ impl Weather {
         let preview = daylight.source["environment_preview"]
             .as_str()
             .map(str::to_string);
-        let initial_hour = daylight.source["sample_hour"].as_f64().unwrap_or(12.) as f32;
+        let initial_hour = daylight.source["sample_hour"]
+            .as_f64()
+            .or_else(|| daylight.source["initial_hour"].as_f64())
+            .unwrap_or(12.) as f32;
         let preset = if options.preset == Preset::Mission
             && preview.as_deref().is_some_and(|s| s.ends_with("-rain"))
         {
@@ -133,7 +139,6 @@ impl Weather {
             thunder_delay: None,
             rng: 0x5343_2026,
             tables: daylight.tables.clone(),
-            fallback_sun: -(daylight.rotation * Vec3::NEG_Z),
             fixed_time: None,
             paused: false,
             legacy_preview: preview,
@@ -141,6 +146,14 @@ impl Weather {
         result.light(options, 0.);
         result
     }
+    pub(crate) fn clock_label(&self) -> String {
+        // Adding whole hours can place an exact minute a few float ULPs below
+        // its boundary. Round to centiseconds before dropping the seconds.
+        let centiseconds = (f64::from(self.hour) * 360_000.).round() as u32;
+        let minutes = centiseconds / 6_000 % 1440;
+        format!("{:02}:{:02}", minutes / 60, minutes % 60)
+    }
+
     pub fn prepare_snapshot(&mut self, probe: &Probe, options: &Options, focus: Vec3) {
         if let Some(seconds) = probe.time {
             let mut left = seconds;
@@ -172,24 +185,17 @@ impl Weather {
             .map(|p| if p.starts_with("night-") { 0. } else { 12. });
         let start = options.hour.or(legacy_hour).unwrap_or(self.initial_hour);
         self.hour = (start + self.clock_hours as f32).rem_euclid(24.);
-        if let Some(tables) = &self.tables {
-            let (direction, color) = tables
-                .sample(self.hour)
-                .expect("validated mission sunlight");
-            self.sun_to = -direction;
-            self.sun_color = color;
-        } else {
-            let angle = (self.hour - self.initial_hour) * std::f32::consts::TAU / 24.;
-            self.sun_to = Quat::from_rotation_z(angle) * self.fallback_sun;
-            self.sun_color = Vec3::ONE;
-        }
-        // Real-time overrides need a sun that actually rises and sets even
-        // when legacy night tables keep a positive ambient sun contribution.
-        if options.hour.is_some() || self.legacy_preview.is_some() {
-            let a = (self.hour - 6.) * std::f32::consts::PI / 12.;
-            self.sun_to = Vec3::new(-a.cos(), a.sin() * 0.9, a.sin() * 0.4).normalize();
-            self.sun_color = Vec3::ONE;
-        }
+        // Source lighting tables may direct light downward even at midnight.
+        // The same solar path drives both the mission clock and manual previews.
+        let angle = (self.hour - 6.) * std::f32::consts::PI / 12.;
+        let (sin, cos) = angle.sin_cos();
+        self.sun_to = Vec3::new(-cos, sin * 0.9, sin * 0.4).normalize();
+        self.sun_color = self
+            .tables
+            .as_ref()
+            .filter(|_| options.hour.is_none() && self.legacy_preview.is_none())
+            .and_then(|tables| tables.sample(self.hour).ok())
+            .map_or(Vec3::ONE, |(_, color)| color);
         self.daylight = smooth(-0.08, 0.18, self.sun_to.y);
         self.illumination = self.daylight * (0.48 + 0.52 * self.sample.sun);
     }
@@ -274,6 +280,7 @@ fn control(
     p: Option<Res<player::Player>>,
     inv: Option<Res<Inventory>>,
     tutorial: Option<Res<Tutorial>>,
+    menu_paused: Option<Res<MenuPaused>>,
     orbit: Option<Res<training::Orbit>>,
 ) {
     let Some(mut w) = weather else {
@@ -281,10 +288,13 @@ fn control(
     };
     let paused = p.is_some_and(|p| p.playback.paused)
         || inv.is_some_and(|i| i.open)
-        || tutorial.is_some_and(|t| t.pausing());
+        || tutorial.is_some_and(|t| t.pausing())
+        || menu_paused.is_some();
     w.paused = paused;
     let focus = orbit.map_or(Vec3::ZERO, |o| o.target);
-    if !paused {
+    if paused {
+        w.light(&options, 0.);
+    } else {
         let dt = if w.fixed_time.is_some() {
             0.
         } else {
@@ -301,6 +311,7 @@ fn control(
 pub(crate) fn cleanup(commands: &mut Commands) {
     commands.queue(debug::cleanup);
     commands.remove_resource::<Weather>();
+    commands.remove_resource::<MenuPaused>();
     commands.remove_resource::<sky::Visuals>();
     commands.remove_resource::<particles::Particles>();
     commands.remove_resource::<particles::Shelter>();
@@ -312,6 +323,31 @@ pub(crate) fn cleanup(commands: &mut Commands) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_clock_and_sun_wrap_through_midnight_together() {
+        let daylight = daylight::Daylight {
+            rotation: Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::NEG_Y),
+            color: Color::WHITE,
+            source: serde_json::json!({"initial_hour": 12. + 4. / 60.}),
+            tables: None,
+        };
+        let options = Options::default();
+        let mut weather = Weather::new(&daylight, &options);
+        assert_eq!(weather.clock_label(), "12:04");
+        assert_eq!(weather.daylight, 1.);
+        weather.advance(4. * 300., &options, Vec3::ZERO);
+        assert_eq!(weather.clock_label(), "16:04");
+        weather.advance((8. * 60. - 4.) * 5., &options, Vec3::ZERO);
+        assert_eq!(weather.clock_label(), "00:00");
+        assert_eq!(weather.daylight, 0.);
+        assert!(weather.sun_to.y < 0.);
+        weather.advance(6. * 300., &options, Vec3::ZERO);
+        assert_eq!(weather.clock_label(), "06:00");
+        assert!(weather.sun_to.y.abs() < 0.0001);
+        assert!(weather.daylight > 0. && weather.daylight < 1.);
+    }
+
     #[test]
     fn lightning_is_bounded_and_does_not_flash_continuously() {
         assert_eq!(flash_envelope(0.), 1.);

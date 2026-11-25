@@ -586,6 +586,9 @@ fn add_screens(app: &mut App) {
         OnEnter(Screen::Training),
         (
             reset_input,
+            |mut commands: Commands| {
+                commands.remove_resource::<crate::environment::MenuPaused>();
+            },
             (
                 training::setup,
                 player::setup,
@@ -620,6 +623,9 @@ fn add_screens(app: &mut App) {
         OnEnter(Screen::Pause),
         (
             reset_input,
+            |mut commands: Commands| {
+                commands.insert_resource(crate::environment::MenuPaused);
+            },
             crate::selection::cancel,
             crate::party::pause_audio,
             spawn_pause,

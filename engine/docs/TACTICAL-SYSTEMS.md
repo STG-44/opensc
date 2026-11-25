@@ -103,17 +103,12 @@ hours and wrap from 23:00 to midnight. Source Z-up directions use the same basis
 conversion as map geometry. A rotation from the light's negative Z axis also
 handles vertical noon sunlight without an undefined look-at transform.
 
-Both the directional and ambient lights use the sampled source color. The
-existing Bevy intensity scales (6500 lux and ambient brightness 500) are retained;
-this is a modern rendering adaptation, not verified original photometry. Source
-RGB values are interpreted as linear light colors. Maps without a matching
-campaign retain the previous neutral light and report that fallback. Invalid,
-incomplete or ambiguous source tables produce a loading error.
-
-Only the initial map time is sampled. Continuous time progression, sky layers,
-fog tables, dynamic local lights, night vision and lighting-dependent perception
-remain unimplemented. Color/direction changes therefore do not change enemy
-visibility yet.
+The initial scene light uses the sampled direction and color. During play the
+weather controller keeps the map's starting hour and hourly sunlight tint, and
+moves the sun through a day and night cycle. Both clock displays use this
+controller's time. Maps without a matching campaign use neutral sunlight.
+Invalid, incomplete or ambiguous source tables produce a loading error.
+See [sky and weather presentation](WEATHER-DESIGN.md).
 
 ## Ground navigation
 

@@ -505,6 +505,17 @@ fn set_camera(orbit: &mut training::Orbit, focus: Vec3) {
     orbit.target = focus + right * orbit.distance * 0.12;
 }
 
+pub(crate) fn clock(
+    weather: Option<Res<crate::environment::Weather>>,
+    mut clock_text: Query<&mut Text, With<ClockText>>,
+) {
+    if let Some(weather) = weather
+        && let Ok(mut text) = clock_text.single_mut()
+    {
+        text.set_if_neq(Text::new(weather.clock_label()));
+    }
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn visuals(
     hud: Option<ResMut<Hud>>,
@@ -512,7 +523,6 @@ pub fn visuals(
     john: Option<Res<player::Player>>,
     party: Option<Res<Party>>,
     inv: Option<Res<Inventory>>,
-    t: Option<Res<Tutorial>>,
     preview: Res<training::Preview>,
     orbit: Res<training::Orbit>,
     combat: Option<Res<crate::combat::Combat>>,
@@ -522,7 +532,7 @@ pub fn visuals(
     buttons: Query<(&CommandButton, &ButtonVisualState)>,
     mut roots: Query<&mut Node, (With<Root>, Without<Piece>)>,
     mut clock_text: Query<
-        (&mut Text, &mut TextFont, &bevy::text::TextLayoutInfo),
+        (&mut TextFont, &bevy::text::TextLayoutInfo),
         (With<ClockText>, Without<Piece>),
     >,
     mut pieces: Query<
@@ -536,8 +546,7 @@ pub fn visuals(
         Without<Root>,
     >,
 ) {
-    let (Some(mut h), Some(john), Some(party), Some(inv), Some(t)) = (hud, john, party, inv, t)
-    else {
+    let (Some(mut h), Some(john), Some(party), Some(inv)) = (hud, john, party, inv) else {
         return;
     };
     if let Some(visibility) = &visibility
@@ -635,12 +644,8 @@ pub fn visuals(
             &mut images,
         );
     }
-    let seconds = t.clock as u32;
-    let value = format!("{:02}:{:02}", seconds / 60, seconds % 60);
-    for (mut text, mut font, layout) in &mut clock_text {
-        let changed_width = text.0.len() != value.len() || resized;
-        text.set_if_neq(Text::new(&value));
-        if changed_width {
+    for (mut font, layout) in &mut clock_text {
+        if resized {
             font.font_size = FontSize::Px(12.0 * fit.scale);
         } else if let FontSize::Px(size) = font.font_size {
             let width = layout.size.x / layout.scale_factor;

@@ -6,12 +6,12 @@ use crate::{
     inventory_ui::ItemImage,
 };
 use bevy::window::PrimaryWindow;
-const CASES: [([u32; 2], f64); 5] = [
-    ([1280, 720], 0.0),
-    ([1920, 1080], 65.0),
-    ([2560, 1080], 5999.0),
-    ([1280, 720], 6000.0),
-    ([1920, 1080], 86400.0),
+const CASES: [([u32; 2], f32, &str); 5] = [
+    ([1280, 720], 12.0 + 4.0 / 60.0, "12:04"),
+    ([1920, 1080], 18.25, "18:15"),
+    ([2560, 1080], 23.0 + 59.0 / 60.0, "23:59"),
+    ([1280, 720], 0.0, "00:00"),
+    ([1920, 1080], 6.5, "06:30"),
 ];
 #[derive(Resource)]
 pub(super) struct Smoke {
@@ -209,7 +209,11 @@ pub(super) fn run(world: &mut World) {
             t.close();
         }
         t.consumed_input = false;
-        t.clock = CASES[s.case].1;
+    }
+    if s.stage >= 2 {
+        let mut options = world.resource_mut::<crate::environment::Options>();
+        options.hour = Some(CASES[s.case].1);
+        options.day_minutes = 0.;
     }
     let ready = s.frames - s.changed > 12 && s.since.elapsed().as_secs_f32() > 1.0;
     match s.stage {
@@ -262,6 +266,7 @@ pub(super) fn run(world: &mut World) {
         }
         3 if ready => {
             let mut result = hud(world);
+            assert_eq!(result["clock"].as_str(), Some(CASES[s.case].2));
             result["window"] = serde_json::json!(CASES[s.case].0);
             s.checks.push(result);
             snapshot(

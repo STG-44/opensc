@@ -133,10 +133,9 @@ pub(super) fn panel(
         if !controls.visible {
             continue;
         }
-        let minutes = (weather.hour * 60.).floor() as u32 % 1440;
         text.set_if_neq(Text::new(format!(
-            "F6 — ПОГОДА\n{} · {:02}:{:02} · {}\nF7 — сменить погоду\nF8 — время +1 ч\nShift + F7/F8 — назад\nF4 — остановить / запустить часы\nShift + F6 — исходные настройки",
-            options.preset.label(), minutes / 60, minutes % 60,
+            "F6 — ПОГОДА\n{} · {} · {}\nF7 — сменить погоду\nF8 — время +1 ч\nShift + F7/F8 — назад\nF4 — остановить / запустить часы\nShift + F6 — исходные настройки",
+            options.preset.label(), weather.clock_label(),
             if options.day_minutes == 0. { "пауза".to_string() } else { format!("{:.0} мин.", options.day_minutes) },
         )));
     }

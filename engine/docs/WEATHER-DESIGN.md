@@ -22,11 +22,18 @@ flowchart LR
     Controller --> Equipment[Headlights and windshield wipers]
 ```
 
-The controller owns bounded, finite physical presentation parameters and blends
-between presets. Simulation time pauses with the mission. A deterministic seed
-supports reproducing storms and capturing the same state. The mission's original
-sunlight remains the initial reference; explicit time overrides are presentation
-settings. Weather settings live outside the original installation.
+The training clock starts at the map's authored time, 12:04, unless the player
+chooses a starting hour. The HUD and the debug panel display the same clock.
+The sun follows a continuous path that passes below the horizon at night.
+Mission lighting takes its sunlight tint from the hourly source table. The
+clock and weather progression pause with the mission.
+
+The selected weather preset stays active until the player changes it. Training's
+Mission preset starts clear. Presets define cloud cover, precipitation, wind,
+visibility and temperature. Wind moves clouds and particles, precipitation
+accumulates wetness or snow, and a deterministic seed controls the timing and
+location of lightning in storm conditions. Weather settings live outside the
+original installation.
 
 Medium/high quality use Bevy's atmospheric scattering lookup tables. Low quality
 provides an analytic sky, exposure-scaled ambient daylight and fewer cloud and
@@ -43,9 +50,10 @@ During training, F6 opens the weather debug panel. F7 cycles weather presets and
 F8 moves the displayed time forward by one hour. Shift reverses F7 and F8. F4
 freezes or resumes the clock from its displayed time. Shift+F6 restores the options
 used at the start of training. Debug changes last for the current session. Use
-the Weather tab in the options menu to save preferences. Debug presets apply
-immediately. Changes through the options menu blend over 12 seconds, and the
-default full day lasts 120 real minutes.
+the Weather tab in the options menu to save preferences. F7 and F8 jump to the
+selected preset or hour for debugging. Preset changes through the options menu
+blend over 12 seconds of active simulation. The full day lasts 120 real minutes
+at the default speed.
 
 The initial performance target is older discrete GPUs including the reported
 Radeon 555X/8870M. Software rendering supplies correctness screenshots only;
