@@ -4965,6 +4965,7 @@ dependencies = [
  "bevy",
  "hound",
  "opensc-localization",
+ "serde",
  "serde_json",
  "sha2",
  "shadow-formats",

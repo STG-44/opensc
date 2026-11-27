@@ -31,17 +31,24 @@ the sample count times the spacing. The outermost cell repeats the last sample.
 ## Run the playtest
 
 ```sh
-shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfield
+shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfield \
+  --m01-layout engine/assets/m01/blockout.json
 ```
 
 Left-click to select or walk and double-click to run. Use H to stop, T to
 follow, and Home to return to the spawn. Pan with WASD or a right drag, rotate
 and tilt with the arrow keys, and zoom with the wheel. F6 opens the weather
-debug panel.
+debug panel. Use R to toggle the headquarters roof. The roof also clears
+automatically while the test character is inside. Walls stop movement, the
+east doorway stays open and the shoreline stops orders that enter the water.
 
 Use `--scene-json /tmp/m01-scene.json` for map bounds and sample size, or
 `--player-json /tmp/m01-walk.json --player-action walk --player-seconds 25`
-for a movement trace. The default is daylight for checking the terrain.
+for a movement trace. Add `--m01-order 272,880` to target the headquarters
+interior from the default blockout arrival point. The terrain preview uses
+the spawn stored in the heightfield when no layout is supplied.
 Use `--weather fog --time-of-day 5.75 --day-length 0` to inspect the location
-in a pre-dawn setup. The playtest covers terrain and controls. CH01 scenario
-content, buildings and the playable waterfront are separate production steps.
+in a pre-dawn setup. The layout marks the fictional village approach and
+headquarters. Locations are local east and north metres, with elevations
+relative to the heightfield origin. The current building and road are
+prototypes for testing the CH01 arrival route.

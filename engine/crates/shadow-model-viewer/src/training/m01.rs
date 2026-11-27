@@ -8,6 +8,9 @@ use bevy::{
 use shadow_formats::{MtfMap, TerrainConfig, TerrainGrid};
 use std::{collections::HashSet, fs::File, io::Read, path::Path};
 
+mod blockout;
+pub(super) use blockout::Blockout;
+
 const MAGIC: &[u8] = b"OpenSC heightfield 1\n";
 const HEADER_BYTES: usize = 20;
 const MAX_SAMPLES: usize = 1_048_576;
@@ -16,6 +19,8 @@ const MAX_FILE_BYTES: usize = MAGIC.len() + HEADER_BYTES + MAX_SAMPLES * 4;
 pub(super) fn validate_arguments(seen: &HashSet<&String>, config: &Config) -> Result<(), String> {
     let supported = [
         "--m01-terrain",
+        "--m01-layout",
+        "--m01-order",
         "--game-dir",
         "--overrides",
         "--window",
@@ -42,6 +47,9 @@ pub(super) fn validate_arguments(seen: &HashSet<&String>, config: &Config) -> Re
     }
     if config.player_seconds.is_some() && config.player_json.is_none() {
         return Err("M01 simulated movement requires --player-json".into());
+    }
+    if config.m01_order.is_some() && config.player_seconds.is_none() {
+        return Err("--m01-order requires --player-json and --player-seconds".into());
     }
     Ok(())
 }
@@ -100,12 +108,20 @@ fn decode(bytes: &[u8]) -> Result<(TerrainGrid, Vec2), &'static str> {
     Ok((grid, spawn))
 }
 
-fn prepare(path: &Path) -> Result<(map_scene::MapScene, Vec2), Box<dyn Error>> {
+fn prepare(
+    path: &Path,
+    layout: Option<&Path>,
+) -> Result<(map_scene::MapScene, Vec2, Option<Blockout>), Box<dyn Error>> {
     let mut bytes = Vec::new();
     File::open(path)?
         .take((MAX_FILE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
-    let (grid, spawn) = decode(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+    let (mut grid, fallback) =
+        decode(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+    let site = layout
+        .map(|path| Blockout::load(path, &mut grid))
+        .transpose()?;
+    let spawn = site.as_ref().map_or(fallback, |site| site.arrival);
     let min = grid.heights.iter().copied().reduce(f32::min).unwrap();
     let max = grid.heights.iter().copied().reduce(f32::max).unwrap();
     let extent = Vec2::from_array(grid.extent()) * WORLD_SCALE;
@@ -116,7 +132,7 @@ fn prepare(path: &Path) -> Result<(map_scene::MapScene, Vec2), Box<dyn Error>> {
         tables: None,
     };
     let c = &grid.config;
-    let report = serde_json::json!({
+    let mut report = serde_json::json!({
         "map": "M01",
         "terrain": {
             "extent_metres": extent.to_array(),
@@ -129,6 +145,9 @@ fn prepare(path: &Path) -> Result<(map_scene::MapScene, Vec2), Box<dyn Error>> {
         "daylight": daylight.source,
         "mission_logic": false,
     });
+    if let Some(site) = &site {
+        report["blockout"] = site.report();
+    }
     // A height tint makes the imported shapes readable during terrain tests.
     let pixels = grid
         .heights
@@ -173,6 +192,7 @@ fn prepare(path: &Path) -> Result<(map_scene::MapScene, Vec2), Box<dyn Error>> {
             report,
         },
         spawn,
+        site,
     ))
 }
 
@@ -181,7 +201,7 @@ pub(super) fn run(
     catalog: &AssetCatalog,
     path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    let (scene, spawn) = prepare(path)?;
+    let (scene, spawn, site) = prepare(path, config.m01_layout.as_deref())?;
     if let Some(output) = &config.scene_json {
         std::fs::write(output, serde_json::to_string_pretty(&scene.report)? + "\n")?;
         return Ok(());
@@ -195,18 +215,37 @@ pub(super) fn run(
         model: template.model.clone(),
         name: template.name.clone(),
         position: Some([spawn.x / WORLD_SCALE, spawn.y / WORLD_SCALE, 0.0]),
-        rotation: Some([0.; 3]),
+        rotation: Some([
+            0.,
+            0.,
+            if site.is_some() {
+                std::f32::consts::FRAC_PI_2
+            } else {
+                0.
+            },
+        ]),
         id: template.id,
         properties: Vec::new(),
     };
     let mut actor = player::prepare(catalog, &scene.grid, &actor)?;
     if let Some(output) = &config.player_json {
         let seconds = config.player_seconds.unwrap_or(0.);
-        actor.preview_action(&config.player_action, &scene.grid);
+        if let Some(point) = config.m01_order {
+            let goal = Vec3::new(point.x, 0., -point.y);
+            if !actor.order(&scene.grid, goal, config.player_action == "run") {
+                return Err("M01 order is outside the terrain".into());
+            }
+        } else {
+            actor.preview_action(&config.player_action, &scene.grid);
+        }
         let input = ButtonInput::default();
         let mut trace = vec![actor.position.to_array()];
         for _ in 0..(seconds * 60.).round() as usize {
+            let previous = actor.position;
             actor.step(&input, 1.0 / 60.0, &scene.grid);
+            if let Some(site) = &site {
+                site.guard(&mut actor, previous, &scene.grid);
+            }
             trace.push(actor.position.to_array());
         }
         let report =
@@ -214,10 +253,16 @@ pub(super) fn run(
         std::fs::write(output, serde_json::to_string_pretty(&report)? + "\n")?;
         return Ok(());
     }
-    let orbit = config
-        .camera_orbit
-        .clone()
-        .unwrap_or_else(|| player_view(actor.camera_target()));
+    let orbit = config.camera_orbit.clone().unwrap_or_else(|| {
+        let mut orbit = player_view(actor.camera_target());
+        if site.is_some() {
+            orbit.yaw = 1.7;
+            orbit.pitch = 0.73;
+            orbit.distance = 31.;
+            orbit.target.x -= 8.;
+        }
+        orbit
+    });
     let title = if config.language == crate::localization::Language::Russian {
         "OpenSC · M01 Тихая вода"
     } else {
@@ -261,6 +306,11 @@ pub(super) fn run(
         )
             .chain(),
     );
+    if let Some(site) = site {
+        app.insert_resource(site)
+            .add_systems(Startup, blockout::spawn.after(setup))
+            .add_systems(Update, blockout::cutaway.after(update_player));
+    }
     if config.environment_json.is_some() || config.environment_time.is_some() {
         app.insert_resource(crate::environment::Probe::new(
             config.environment_json.clone(),

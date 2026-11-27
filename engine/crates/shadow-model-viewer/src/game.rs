@@ -63,6 +63,8 @@ fn main() {
                 | "--map"
                 | "--terrain"
                 | "--m01-terrain"
+                | "--m01-layout"
+                | "--m01-order"
                 | "--camera-orbit"
         )
     });

@@ -12,8 +12,16 @@ pub(crate) use audio::Gain;
 pub(crate) use diagnostics::Probe;
 pub(crate) use profile::{Options, Preset, Quality, Sample};
 pub(crate) use surfaces::ExposedSurface;
-pub(crate) fn prepare_shelter(commands: &mut Commands, scene: &crate::map_scene::MapScene) {
-    commands.insert_resource(particles::Shelter::prepare(scene));
+pub(crate) fn prepare_shelter(
+    commands: &mut Commands,
+    scene: &crate::map_scene::MapScene,
+    roofs: impl IntoIterator<Item = [Vec3; 3]>,
+) {
+    let mut shelter = particles::Shelter::prepare(scene);
+    for triangle in roofs {
+        shelter.add(triangle, None);
+    }
+    commands.insert_resource(shelter);
 }
 fn shader_source(name: &str, embedded: &'static str) -> std::borrow::Cow<'static, str> {
     #[cfg(debug_assertions)]

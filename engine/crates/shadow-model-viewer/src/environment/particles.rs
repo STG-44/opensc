@@ -40,7 +40,7 @@ impl Plugin for ParticlePlugin {
 }
 struct Roof {
     triangle: [Vec3; 3],
-    owner: [i32; 2],
+    owner: Option<[i32; 2]>,
 }
 #[derive(Resource, Default)]
 pub(super) struct Shelter {
@@ -72,30 +72,31 @@ impl Shelter {
                 let ids = indices.iter().collect::<Vec<_>>();
                 for face in ids.as_chunks::<3>().0 {
                     let t = face.map(|i| matrix.transform_point3(Vec3::from_array(v[i])));
-                    let normal = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
-                    if normal.y.abs() < 0.25 {
-                        continue;
-                    }
-                    let index = result.roofs.len();
-                    let low = (t[0].min(t[1]).min(t[2]) / 4.).floor().as_ivec3();
-                    let high = (t[0].max(t[1]).max(t[2]) / 4.).floor().as_ivec3();
-                    if i64::from(high.x - low.x + 1) * i64::from(high.z - low.z + 1) > 512 {
-                        result.global.push(index);
-                    } else {
-                        for z in low.z..=high.z {
-                            for x in low.x..=high.x {
-                                result.bins.entry(IVec2::new(x, z)).or_default().push(index);
-                            }
-                        }
-                    }
-                    result.roofs.push(Roof {
-                        triangle: t,
-                        owner: instance.id,
-                    });
+                    result.add(t, Some(instance.id));
                 }
             }
         }
         result
+    }
+    pub(super) fn add(&mut self, triangle: [Vec3; 3], owner: Option<[i32; 2]>) {
+        let [a, b, c] = triangle;
+        let normal = (b - a).cross(c - a).normalize_or_zero();
+        if normal.y.abs() < 0.25 {
+            return;
+        }
+        let index = self.roofs.len();
+        let low = (a.min(b).min(c) / 4.).floor().as_ivec3();
+        let high = (a.max(b).max(c) / 4.).floor().as_ivec3();
+        if i64::from(high.x - low.x + 1) * i64::from(high.z - low.z + 1) > 512 {
+            self.global.push(index);
+        } else {
+            for z in low.z..=high.z {
+                for x in low.x..=high.x {
+                    self.bins.entry(IVec2::new(x, z)).or_default().push(index);
+                }
+            }
+        }
+        self.roofs.push(Roof { triangle, owner });
     }
     fn height(&self, x: f32, z: f32, ignored: Option<[i32; 2]>) -> Option<f32> {
         let bin = (Vec2::new(x, z) / 4.).floor().as_ivec2();
@@ -106,7 +107,7 @@ impl Shelter {
             .chain(&self.global)
             .filter_map(|i| {
                 let r = &self.roofs[*i];
-                if Some(r.owner) == ignored {
+                if ignored.is_some() && r.owner == ignored {
                     return None;
                 }
                 roof_height(r.triangle, x, z)

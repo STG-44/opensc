@@ -19,6 +19,8 @@ struct Config {
     map: String,
     terrain: String,
     m01_terrain: Option<PathBuf>,
+    m01_layout: Option<PathBuf>,
+    m01_order: Option<Vec2>,
     screenshot: Option<PathBuf>,
     scene_json: Option<PathBuf>,
     cpu_profile: Option<PathBuf>,
@@ -760,7 +762,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "shadow-map-viewer --tutorial-smoke-json FILE.json | --combat-smoke-json FILE.json | --bda-smoke-json FILE.json | --grenade-smoke-json FILE.json | --fence-smoke-json FILE.json | --smg-smoke-json FILE.json | --medical-smoke-json FILE.json | --armor-smoke-json FILE.json | --vehicle-smoke-json FILE.json | --gate-smoke-json FILE.json | --jack-smoke-json FILE.json | --evacuation-smoke-json FILE.json | --selection-smoke-json FILE.json [--window 1280x720] [--language ru|en] --game-dir PATH [--overrides PATH] [--map NAME.mtf] [--terrain NAME] [--camera overview|camp] [--player on|off] [--player-action idle|walk|run|wave|pickup|stab|shoot|grenade|fence|smg|medical|armor|vehicle --player-seconds SECONDS] [--player-json FILE.json] [--scene-json FILE.json] [--screenshot FILE.png]\nБоец: ЛКМ — выбор/идти; двойной ЛКМ — бег; ПКМ — снять выбор, удержание — камера; H — остановить; T — слежение; Numpad — камера; Ctrl+P — пауза; Esc — учебная пауза; Ctrl+X — выход. Учебные: Home — начало, [ / ] — кадр. Просмотр карты: WASD — камера, ЛКМ/стрелки — вращение, C — площадка, Esc — выход."
         );
         println!(
-            "M01 terrain prototype: --game-dir PATH --m01-terrain FILE [--scene-json FILE.json].\nRender diagnostics: --camera-orbit X,Y,Z,YAW,PITCH,DISTANCE reproduces a fixed camera pose; combine with --screenshot FILE.png."
+            "M01 terrain prototype: --game-dir PATH --m01-terrain FILE [--m01-layout FILE.json] [--scene-json FILE.json].\nRender diagnostics: --camera-orbit X,Y,Z,YAW,PITCH,DISTANCE reproduces a fixed camera pose; combine with --screenshot FILE.png."
         );
         return Ok(None);
     }
@@ -770,6 +772,8 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         map: "maps/training_final.mtf".into(),
         terrain: "training".into(),
         m01_terrain: None,
+        m01_layout: None,
+        m01_order: None,
         screenshot: None,
         scene_json: None,
         cpu_profile: None,
@@ -820,6 +824,17 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--map" => config.map = shadow_formats::normalize_path(value)?,
             "--terrain" => config.terrain = value.to_lowercase(),
             "--m01-terrain" => config.m01_terrain = Some(value.into()),
+            "--m01-layout" => config.m01_layout = Some(value.into()),
+            "--m01-order" => {
+                let (east, north) = value
+                    .split_once(',')
+                    .ok_or("--m01-order requires EAST,NORTH")?;
+                let p = Vec2::new(east.parse()?, north.parse()?);
+                if !p.is_finite() {
+                    return Err("--m01-order needs finite coordinates".into());
+                }
+                config.m01_order = Some(p);
+            }
             "--screenshot" => config.screenshot = Some(value.into()),
             "--scene-json" => config.scene_json = Some(value.into()),
             "--cpu-profile-json" => {
@@ -986,6 +1001,8 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if config.m01_terrain.is_some() {
         m01::validate_arguments(&seen, &config)?;
         config.player = true;
+    } else if config.m01_layout.is_some() || config.m01_order.is_some() {
+        return Err("M01 layout and order options require --m01-terrain".into());
     }
     config.game = game.ok_or("укажи --game-dir или SHADOW_GAME_DIR")?;
     if config.terrain.is_empty()
@@ -1090,6 +1107,7 @@ pub(crate) fn setup(
     language: Res<crate::localization::Language>,
     environment: Option<Res<crate::environment::Options>>,
     environment_probe: Option<Res<crate::environment::Probe>>,
+    site: Option<Res<m01::Blockout>>,
     integrated: Option<Res<IntegratedSession>>,
     actor: Option<Res<player::Player>>,
     dynamic: (
@@ -1105,7 +1123,8 @@ pub(crate) fn setup(
         weather.prepare_snapshot(&probe, &options, scene.focus);
     }
     commands.insert_resource(weather);
-    crate::environment::prepare_shelter(&mut commands, &scene);
+    let roofs = site.as_ref().map(|site| site.roof_triangles());
+    crate::environment::prepare_shelter(&mut commands, &scene, roofs.into_iter().flatten());
     let conditions = crate::vehicle::weather::Conditions::from_source(&scene.daylight.source);
     let sun_intensity = conditions.sun();
     let ambient_intensity = conditions.ambient();
@@ -1340,6 +1359,13 @@ pub(crate) fn setup(
             "\nF6 — ПОГОДА"
         },
     );
+    if site.is_some() {
+        label.push_str(if *language == crate::localization::Language::Russian {
+            "\nR — показать / скрыть крышу"
+        } else {
+            "\nR to toggle the roof"
+        });
+    }
     let mut label_entity = commands.spawn((
         player::SceneEntity,
         UiTargetCamera(camera),
@@ -2092,7 +2118,7 @@ pub(crate) fn update_markers(
         }
     }
 }
-#[allow(clippy::too_many_arguments)] // Ресурсы и независимые запросы внедряет Bevy.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // Ресурсы и независимые запросы внедряет Bevy.
 pub(crate) fn update_player(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -2112,9 +2138,10 @@ pub(crate) fn update_player(
     dynamic: (
         Option<Res<crate::vehicle::Vehicle>>,
         Option<ResMut<crate::gate::Gate>>,
+        Option<Res<m01::Blockout>>,
     ),
 ) {
-    let (vehicle, mut gate) = dynamic;
+    let (vehicle, mut gate, site) = dynamic;
     let Some(mut player) = player else {
         return;
     };
@@ -2176,6 +2203,11 @@ pub(crate) fn update_player(
             fence.as_ref().is_some_and(|f| f.handles_collision(id))
                 || gate.as_ref().is_some_and(|g| g.id == id)
         });
+    }
+    if let Some(site) = &site
+        && !input.just_pressed(KeyCode::Home)
+    {
+        site.guard(&mut player, previous, grid);
     }
     if let Some(f) = &mut fence
         && !vehicle.as_ref().is_some_and(|v| v.occupied)
