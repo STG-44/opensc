@@ -1,0 +1,47 @@
+# M01 Still Water terrain playtest
+
+The first area uses a 1,000 × 1,000 m cut inside the planned 4 × 4 km map.
+The playtest renders its heightfield and uses that same surface for ground
+orders, walking, running and camera clearance. The player uses a temporary
+character from the local game installation.
+
+## Prepare the terrain
+
+The offline exporter needs Python, Rasterio and NumPy. It accepts an unrotated,
+north-up GeoTIFF with metre coordinates and one elevation band. The input and
+its source manifest stay with the local map assets.
+
+```sh
+python3 engine/scripts/export_heightfield.py /path/to/m01-core-1km.tif /path/to/m01.heightfield \
+  --spacing 4 --height-origin 420 --spawn 180 450
+```
+
+The sample site uses the LVermGeo Sachsen-Anhalt DGM1 data attributed to
+© GeoBasis-DE / LVermGeo ST under Datenlizenz Deutschland – Namensnennung 2.0.
+Keep the dataset attribution, source query and conversion details alongside
+any derived terrain you distribute.
+
+The heightfield starts with the bytes `OpenSC heightfield 1\n`, then two
+little-endian `u32` dimensions and three little-endian `f32` values for sample
+spacing, spawn easting and spawn northing in metres. The remainder is
+little-endian `f32` elevations relative to the chosen vertical origin. Samples
+run west to east as columns and south to north as rows. The playable extent is
+the sample count times the spacing. The outermost cell repeats the last sample.
+
+## Run the playtest
+
+```sh
+shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfield
+```
+
+Left-click to select or walk and double-click to run. Use H to stop, T to
+follow, and Home to return to the spawn. Pan with WASD or a right drag, rotate
+and tilt with the arrow keys, and zoom with the wheel. F6 opens the weather
+debug panel.
+
+Use `--scene-json /tmp/m01-scene.json` for map bounds and sample size, or
+`--player-json /tmp/m01-walk.json --player-action walk --player-seconds 25`
+for a movement trace. The default is daylight for checking the terrain.
+Use `--weather fog --time-of-day 5.75 --day-length 0` to inspect the location
+in a pre-dawn setup. The playtest covers terrain and controls. CH01 scenario
+content, buildings and the playable waterfront are separate production steps.

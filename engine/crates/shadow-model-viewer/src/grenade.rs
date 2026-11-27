@@ -1001,6 +1001,7 @@ mod tests {
                 span: 20.0,
                 grid: Some(grid),
                 playable: true,
+                first_area: false,
             })
             .add_systems(Update, crate::training::issue_orders);
         let window = app.world_mut().spawn(window).id();

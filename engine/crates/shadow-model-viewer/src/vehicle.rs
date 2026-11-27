@@ -1385,6 +1385,7 @@ mod tests {
                 span: 1.0,
                 grid: Some(grid),
                 playable: true,
+                first_area: false,
             })
             .insert_resource(crate::training::Orbit {
                 target: Vec3::ZERO,

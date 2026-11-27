@@ -9,11 +9,16 @@ use bevy::{
 };
 use shadow_formats::{AssetCatalog, HelpDefinitions, MissionDefinition, normalize_path};
 use std::{env, error::Error, path::PathBuf};
+
+mod m01;
+
+const DIAGNOSTIC_PANEL_WIDTH: f32 = 315.;
 struct Config {
     game: PathBuf,
     overrides: Option<PathBuf>,
     map: String,
     terrain: String,
+    m01_terrain: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     scene_json: Option<PathBuf>,
     cpu_profile: Option<PathBuf>,
@@ -53,6 +58,7 @@ pub(crate) struct Preview {
     pub(crate) span: f32,
     pub(crate) grid: Option<shadow_formats::TerrainGrid>,
     pub(crate) playable: bool,
+    pub(crate) first_area: bool,
 }
 #[derive(Resource, Clone)]
 pub(crate) struct Orbit {
@@ -75,6 +81,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     let catalog = crate::scene::open_game_catalog(&config.game, config.overrides.as_deref())?;
+    if let Some(path) = config.m01_terrain.as_deref() {
+        return m01::run(&config, &catalog, path);
+    }
     let mut scene = map_scene::prepare(&catalog, &config.map, &config.terrain)?;
     if let Some(mode) = &config.environment_preview {
         scene.daylight.source["environment_preview"] = serde_json::json!(mode);
@@ -452,6 +461,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             span,
             grid: None,
             playable: actor.is_some(),
+            first_area: false,
         })
         .insert_resource(orbit)
         .init_resource::<orders::ClickHistory>()
@@ -750,7 +760,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "shadow-map-viewer --tutorial-smoke-json FILE.json | --combat-smoke-json FILE.json | --bda-smoke-json FILE.json | --grenade-smoke-json FILE.json | --fence-smoke-json FILE.json | --smg-smoke-json FILE.json | --medical-smoke-json FILE.json | --armor-smoke-json FILE.json | --vehicle-smoke-json FILE.json | --gate-smoke-json FILE.json | --jack-smoke-json FILE.json | --evacuation-smoke-json FILE.json | --selection-smoke-json FILE.json [--window 1280x720] [--language ru|en] --game-dir PATH [--overrides PATH] [--map NAME.mtf] [--terrain NAME] [--camera overview|camp] [--player on|off] [--player-action idle|walk|run|wave|pickup|stab|shoot|grenade|fence|smg|medical|armor|vehicle --player-seconds SECONDS] [--player-json FILE.json] [--scene-json FILE.json] [--screenshot FILE.png]\nБоец: ЛКМ — выбор/идти; двойной ЛКМ — бег; ПКМ — снять выбор, удержание — камера; H — остановить; T — слежение; Numpad — камера; Ctrl+P — пауза; Esc — учебная пауза; Ctrl+X — выход. Учебные: Home — начало, [ / ] — кадр. Просмотр карты: WASD — камера, ЛКМ/стрелки — вращение, C — площадка, Esc — выход."
         );
         println!(
-            "Render diagnostics: --camera-orbit X,Y,Z,YAW,PITCH,DISTANCE reproduces a fixed camera pose; combine with --screenshot FILE.png."
+            "M01 terrain prototype: --game-dir PATH --m01-terrain FILE [--scene-json FILE.json].\nRender diagnostics: --camera-orbit X,Y,Z,YAW,PITCH,DISTANCE reproduces a fixed camera pose; combine with --screenshot FILE.png."
         );
         return Ok(None);
     }
@@ -759,6 +769,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
         overrides: None,
         map: "maps/training_final.mtf".into(),
         terrain: "training".into(),
+        m01_terrain: None,
         screenshot: None,
         scene_json: None,
         cpu_profile: None,
@@ -808,6 +819,7 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
             "--overrides" => config.overrides = Some(value.into()),
             "--map" => config.map = shadow_formats::normalize_path(value)?,
             "--terrain" => config.terrain = value.to_lowercase(),
+            "--m01-terrain" => config.m01_terrain = Some(value.into()),
             "--screenshot" => config.screenshot = Some(value.into()),
             "--scene-json" => config.scene_json = Some(value.into()),
             "--cpu-profile-json" => {
@@ -971,6 +983,10 @@ fn config() -> Result<Option<Config>, Box<dyn Error>> {
     if config.smoke.is_some() {
         config.player = true;
     }
+    if config.m01_terrain.is_some() {
+        m01::validate_arguments(&seen, &config)?;
+        config.player = true;
+    }
     config.game = game.ok_or("укажи --game-dir или SHADOW_GAME_DIR")?;
     if config.terrain.is_empty()
         || !config
@@ -1071,6 +1087,7 @@ pub(crate) fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut fonts: ResMut<Assets<Font>>,
+    language: Res<crate::localization::Language>,
     environment: Option<Res<crate::environment::Options>>,
     environment_probe: Option<Res<crate::environment::Probe>>,
     integrated: Option<Res<IntegratedSession>>,
@@ -1137,7 +1154,11 @@ pub(crate) fn setup(
         .id();
     let terrain_texture = images.add(scene.texture);
     commands.spawn((
-        Name::new("Training terrain"),
+        Name::new(if preview.first_area {
+            "M01 terrain"
+        } else {
+            "Training terrain"
+        }),
         crate::environment::ExposedSurface,
         Mesh3d(meshes.add(scene.terrain)),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -1274,13 +1295,23 @@ pub(crate) fn setup(
                 left: px(0),
                 top: px(0),
                 bottom: px(0),
-                width: px(315),
+                width: px(DIAGNOSTIC_PANEL_WIDTH),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.015, 0.03, 0.025, 0.94)),
         ));
     }
-    let mut label = if preview.playable {
+    let mut label = if preview.first_area {
+        match *language {
+            crate::localization::Language::Russian => {
+                "M01 · ТИХАЯ ВОДА\nПроверка рельефа\n\nЛКМ — выбрать / идти\nДвойной ЛКМ — бег\nH — остановить · T — слежение\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
+            }
+            _ => {
+                "M01 · STILL WATER\nTerrain playtest\n\nClick to select or walk\nDouble-click to run\nH to stop · T to follow\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
+            }
+        }
+        .into()
+    } else if preview.playable {
         format!(
             "SHADOW COMPANY\n\n{}\nОбучение: снаряжение\n\nЛКМ — выбрать / идти\nДвойной ЛКМ — бег\nПКМ — выбор / граната\nH — остановить\nT — следить за бойцом\n1 / F11 — выбрать\n\nNumpad — камера\nУдержание ПКМ — камера\nКрая экрана — прокрутка\nКолесо — приближение\nCtrl+P / Esc — пауза\nCtrl+X — выход\n\nУчебные: Home — начало\n[ / ] — кадр\n\nПредмет — ЛКМ: подобрать\nВраг — ЛКМ: атака\nSpace — инвентарь\nПрототип: без ответного ИИ",
             actor
@@ -1302,7 +1333,13 @@ pub(crate) fn setup(
     if integrated.is_some() {
         label = label.replace("Ctrl+P / Esc — пауза", "Ctrl+P — пауза\nEsc — меню");
     }
-    label.push_str("\nF6 — ПОГОДА");
+    label.push_str(
+        if preview.first_area && *language != crate::localization::Language::Russian {
+            "\nF6 to open weather controls"
+        } else {
+            "\nF6 — ПОГОДА"
+        },
+    );
     let mut label_entity = commands.spawn((
         player::SceneEntity,
         UiTargetCamera(camera),
@@ -1379,9 +1416,14 @@ pub(crate) fn controls(
     {
         *orbit = player_view(player.camera_target());
     }
-    let pointer_blocked = pointer.as_ref().is_some_and(|s| s.world_blocked);
+    let pointer_blocked = pointer.as_ref().is_some_and(|s| s.world_blocked)
+        || (preview.first_area
+            && window
+                .cursor_position()
+                .is_some_and(|p| p.x < DIAGNOSTIC_PANEL_WIDTH));
     let dt = time.delta_secs();
-    let (left, right, up, down) = if playable {
+    let numpad = playable && !preview.first_area;
+    let (left, right, up, down) = if numpad {
         (
             KeyCode::Numpad7,
             KeyCode::Numpad9,
@@ -1418,7 +1460,7 @@ pub(crate) fn controls(
     .clamp(if playable { 2.5 } else { 5.0 }, preview.span * 3.0);
     let forward = Vec3::new(-orbit.yaw.sin(), 0.0, -orbit.yaw.cos());
     let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
-    let (f, b, l, r) = if playable {
+    let (f, b, l, r) = if numpad {
         (
             KeyCode::Numpad8,
             KeyCode::Numpad5,
@@ -1511,7 +1553,9 @@ pub(crate) fn issue_orders(
     let Some(mut player) = player else {
         return;
     };
-    if !mouse.just_pressed(MouseButton::Left) && !mouse.just_pressed(MouseButton::Right) {
+    if (!mouse.just_pressed(MouseButton::Left) && !mouse.just_pressed(MouseButton::Right))
+        || (preview.first_area && mouse.just_pressed(MouseButton::Right))
+    {
         return;
     }
     let cursor = extras.6.as_ref().and_then(|s| s.click_cursor).or_else(|| {
@@ -1765,7 +1809,7 @@ pub(crate) fn issue_orders(
     let Some(cursor) = cursor else {
         return;
     };
-    if cursor.x < 0.0 {
+    if cursor.x < 0.0 || (preview.first_area && cursor.x < DIAGNOSTIC_PANEL_WIDTH) {
         return;
     }
     if medical.as_ref().is_some_and(|m| m.armed) {
@@ -2165,6 +2209,13 @@ pub(crate) fn update_player(
     if input.just_pressed(KeyCode::Home) {
         *orbit = player_view(player.camera_target());
     }
+    if preview.first_area {
+        let Vec3 { x, y, z } = player.position;
+        for mut text in &mut status {
+            text.set_if_neq(Text::new(format!("X {x:.1} · Y {y:.1} · Z {z:.1} m")));
+        }
+        return;
+    }
     let clip = &player.clips[player.playback.selected];
     for mut text in &mut status {
         *text = Text::new(format!(
@@ -2353,6 +2404,7 @@ pub(crate) fn prepare_session(catalog: &AssetCatalog) -> Result<Session, Box<dyn
             screenshot: None,
             grid: None,
             playable: true,
+            first_area: false,
         },
         orbit,
         actor,

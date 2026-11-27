@@ -947,6 +947,7 @@ pub(crate) mod tests {
                 span: 20.0,
                 grid: Some(g),
                 playable: true,
+                first_area: false,
             });
         let window_entity = app.world_mut().spawn(window).id();
         app.world_mut()
@@ -1006,6 +1007,7 @@ pub(crate) mod tests {
                 span: 2.0,
                 grid: Some(grid()),
                 playable: true,
+                first_area: false,
             })
             .insert_resource(crate::training::Orbit {
                 target: Vec3::ZERO,

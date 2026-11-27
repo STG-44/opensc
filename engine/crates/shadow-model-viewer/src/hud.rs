@@ -805,6 +805,7 @@ mod tests {
                 focus: Vec3::ZERO,
                 span: 100.0,
                 playable: true,
+                first_area: false,
             })
             .insert_resource(training::Orbit {
                 target: Vec3::ZERO,

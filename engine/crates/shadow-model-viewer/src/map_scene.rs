@@ -168,7 +168,7 @@ pub fn prepare(
         report,
     })
 }
-fn terrain_mesh(grid: &TerrainGrid) -> Mesh {
+pub(crate) fn terrain_mesh(grid: &TerrainGrid) -> Mesh {
     let c = &grid.config;
     // Edge pillars protrude beyond the nominal atlas extent. A render-only
     // cell supports these details without enlarging the playable map.

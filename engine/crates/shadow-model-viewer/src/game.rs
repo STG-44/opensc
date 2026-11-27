@@ -62,6 +62,7 @@ fn main() {
                 | "--scene-json"
                 | "--map"
                 | "--terrain"
+                | "--m01-terrain"
                 | "--camera-orbit"
         )
     });

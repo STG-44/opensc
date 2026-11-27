@@ -322,6 +322,7 @@ mod tests {
                 span: 0.0,
                 grid: Some(grid),
                 playable: true,
+                first_area: false,
             })
             .insert_resource(Selection {
                 test_cursor: Some(Vec2::new(400.0, 300.0)),
