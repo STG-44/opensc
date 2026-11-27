@@ -110,21 +110,27 @@ fn atmosphere_settings(q: Quality) -> AtmosphereSettings {
     }
 }
 fn uniform(w: &Weather, camera: Vec3) -> SkyUniform {
+    let sample = w.sample();
     SkyUniform {
         camera_flash: camera.extend(w.flash),
-        sun_day: w.sun_to.extend(w.daylight),
-        cloud: Vec4::new(w.sample.cloud, w.sample.dust, w.sample.sun, w.illumination),
+        sun_day: sample.sun_to.extend(sample.daylight),
+        cloud: Vec4::new(
+            sample.profile.cloud,
+            sample.profile.dust,
+            sample.profile.sun,
+            sample.illumination,
+        ),
         wind_time: Vec4::new(
-            w.sample.wind.x,
-            w.sample.wind.y,
+            sample.profile.wind.x,
+            sample.profile.wind.y,
             (w.elapsed % 100_000.) as f32,
-            w.hour,
+            sample.hour,
         ),
         settings: Vec4::new(
             w.quality.cloud_steps() as f32,
             if w.quality == Quality::Low { 1. } else { 0. },
-            w.sample.visibility,
-            w.sample.thunder,
+            sample.profile.visibility,
+            sample.profile.thunder,
         ),
     }
 }
@@ -288,6 +294,7 @@ pub(super) fn update(
     };
     let quality = options.quality.resolve(v.software);
     w.quality = quality;
+    let sample = w.sample();
     for (entity, camera, mut exposure, mut fog, mut ambient) in &mut cameras {
         if v.quality != quality {
             if let Some(planet) = v.planet.take() {
@@ -310,16 +317,21 @@ pub(super) fn update(
             }
             v.quality = quality;
         }
-        let target_exposure = 6. + w.daylight * 7.;
+        let target_exposure = 6. + sample.daylight * 7.;
         exposure.ev100 = target_exposure;
         let dust = Vec3::new(0.44, 0.30, 0.16);
         let ordinary = Vec3::new(0.66, 0.72, 0.78);
-        let fog_color = ordinary.lerp(dust, w.sample.dust) * (0.045 + 0.955 * w.daylight);
+        let fog_color =
+            ordinary.lerp(dust, sample.profile.dust) * (0.045 + 0.955 * sample.daylight);
         fog.color = Color::linear_rgb(fog_color.x, fog_color.y, fog_color.z);
-        fog.directional_light_color = Color::srgba(1., 0.9, 0.7, 0.12 * w.sample.sun);
-        fog.falloff = FogFalloff::from_visibility(w.sample.visibility);
-        ambient.color = Color::linear_rgb(0.65 + 0.35 * w.daylight, 0.75 + 0.25 * w.daylight, 1.);
-        let overcast = 1. - w.sample.sun;
+        fog.directional_light_color = Color::srgba(1., 0.9, 0.7, 0.12 * sample.profile.sun);
+        fog.falloff = FogFalloff::from_visibility(sample.profile.visibility);
+        ambient.color = Color::linear_rgb(
+            0.65 + 0.35 * sample.daylight,
+            0.75 + 0.25 * sample.daylight,
+            1.,
+        );
+        let overcast = 1. - sample.profile.sun;
         let sky_fill = if quality == Quality::Low {
             // Low lacks an atmosphere environment map. Calibrate the extra
             // fill at noon and scale it with exposure to avoid a twilight peak.
@@ -327,7 +339,7 @@ pub(super) fn update(
         } else {
             0.
         };
-        ambient.brightness = 15. + w.daylight * (280. + overcast * 250. + sky_fill);
+        ambient.brightness = 15. + sample.daylight * (280. + overcast * 250. + sky_fill);
         if let Some(mut m) = materials.get_mut(&v.material) {
             m.data = uniform(&w, camera.translation);
         }
@@ -336,17 +348,17 @@ pub(super) fn update(
         }
     }
     for (entity, mut transform, mut light, disk) in &mut suns {
-        transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, -w.sun_to);
-        light.illuminance = 110_000. * w.sample.sun * w.daylight;
-        light.color = Color::linear_rgb(w.sun_color.x, w.sun_color.y, w.sun_color.z);
-        light.shadow_maps_enabled = w.daylight > 0.01;
+        transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, -sample.sun_to);
+        light.illuminance = 110_000. * sample.profile.sun * sample.daylight;
+        light.color = Color::linear_rgb(sample.sun_color.x, sample.sun_color.y, sample.sun_color.z);
+        light.shadow_maps_enabled = sample.daylight > 0.01;
         if disk.is_none() {
             commands.entity(entity).insert(SunDisk::EARTH);
         }
     }
     for (mut transform, mut light) in &mut moons {
-        transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, w.sun_to);
-        light.illuminance = 0.25 * (1. - w.daylight) * (1. - w.sample.cloud * 0.85);
+        transform.rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sample.sun_to);
+        light.illuminance = 0.25 * (1. - sample.daylight) * (1. - sample.profile.cloud * 0.85);
     }
     for mut light in &mut flash {
         light.illuminance = w.flash * 80_000.;

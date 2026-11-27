@@ -299,9 +299,15 @@ pub(super) fn update(
     let up = *camera.up();
     let center = camera.translation + forward * 17.;
     let extent = Vec3::new(29., 23., 29.);
-    let wind = Vec3::new(w.sample.wind.x, 0., w.sample.wind.y)
+    let sample = w.sample();
+    let wind = Vec3::new(sample.profile.wind.x, 0., sample.profile.wind.y)
         * (1. + 0.18 * ((w.elapsed as f32) * 0.7).sin());
-    let weights = [w.sample.rain, w.sample.snow, w.sample.hail, w.sample.dust];
+    let weights = [
+        sample.profile.rain,
+        sample.profile.snow,
+        sample.profile.hail,
+        sample.profile.dust,
+    ];
     let sum = weights.iter().sum::<f32>().max(1.);
     let budget = w.quality.particles();
     let mut seed = state.rng;
@@ -376,7 +382,7 @@ pub(super) fn update(
                     p.bounced = false;
                 }
             }
-            let brightness = 0.12 + 0.88 * w.daylight + w.flash * 2.;
+            let brightness = 0.12 + 0.88 * sample.daylight + w.flash * 2.;
             let (a, b, color) = match group.kind {
                 0 => {
                     let along = p.velocity.normalize_or_zero();

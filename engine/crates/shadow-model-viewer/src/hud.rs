@@ -512,7 +512,7 @@ pub(crate) fn clock(
     if let Some(weather) = weather
         && let Ok(mut text) = clock_text.single_mut()
     {
-        text.set_if_neq(Text::new(weather.clock_label()));
+        text.set_if_neq(Text::new(weather.sample().clock_label()));
     }
 }
 

@@ -43,7 +43,8 @@ impl Controls {
             weather.set_debug_preset(options.preset);
         }
         if keys.just_pressed(KeyCode::F8) {
-            options.hour = Some((weather.hour + if backwards { -1. } else { 1. }).rem_euclid(24.));
+            options.hour =
+                Some((weather.sample().hour + if backwards { -1. } else { 1. }).rem_euclid(24.));
         }
         if keys.just_pressed(KeyCode::F4) {
             if options.day_minutes > 0. {
@@ -135,7 +136,7 @@ pub(super) fn panel(
         }
         text.set_if_neq(Text::new(format!(
             "F6 — ПОГОДА\n{} · {} · {}\nF7 — сменить погоду\nF8 — время +1 ч\nShift + F7/F8 — назад\nF4 — остановить / запустить часы\nShift + F6 — исходные настройки",
-            options.preset.label(), weather.clock_label(),
+            options.preset.label(), weather.sample().clock_label(),
             if options.day_minutes == 0. { "пауза".to_string() } else { format!("{:.0} мин.", options.day_minutes) },
         )));
     }
@@ -171,19 +172,19 @@ mod tests {
         keys.press(KeyCode::F6);
         keys.press(KeyCode::F8);
         controls.input(&keys, &mut options, &mut weather);
-        assert_eq!(weather.hour, 0.5);
+        assert_eq!(weather.sample().hour, 0.5);
         weather.advance(30., &options, Vec3::ZERO);
-        let displayed = weather.hour;
+        let displayed = weather.sample().hour;
         keys.reset_all();
         keys.press(KeyCode::F4);
         controls.input(&keys, &mut options, &mut weather);
-        assert_eq!(weather.hour, displayed);
+        assert_eq!(weather.sample().hour, displayed);
         weather.advance(120., &options, Vec3::ZERO);
-        assert_eq!(weather.hour, displayed);
+        assert_eq!(weather.sample().hour, displayed);
         keys.reset_all();
         keys.press(KeyCode::F4);
         controls.input(&keys, &mut options, &mut weather);
-        assert_eq!(weather.hour, displayed);
+        assert_eq!(weather.sample().hour, displayed);
         assert_eq!(options.day_minutes, 30.);
         keys.reset_all();
         keys.press(KeyCode::ShiftLeft);
@@ -195,7 +196,7 @@ mod tests {
         keys.press(KeyCode::F7);
         controls.input(&keys, &mut options, &mut weather);
         assert_eq!(options.preset, Preset::Blizzard);
-        assert_eq!(weather.sample.snow, 1.);
+        assert_eq!(weather.sample().profile.snow, 1.);
         keys.reset_all();
         keys.press(KeyCode::ShiftLeft);
         keys.press(KeyCode::F6);
@@ -204,14 +205,14 @@ mod tests {
 
         options.hour = None;
         weather.advance(30., &options, Vec3::ZERO);
-        let mission_sun = weather.sun_to;
-        let displayed = weather.hour;
+        let mission_sun = weather.sample().sun_to;
+        let displayed = weather.sample().hour;
         keys.reset_all();
         keys.press(KeyCode::F4);
         controls.input(&keys, &mut options, &mut weather);
         weather.advance(30., &options, Vec3::ZERO);
         assert_eq!(options.hour, None);
-        assert_eq!(weather.hour, displayed);
-        assert_eq!(weather.sun_to, mission_sun);
+        assert_eq!(weather.sample().hour, displayed);
+        assert_eq!(weather.sample().sun_to, mission_sun);
     }
 }

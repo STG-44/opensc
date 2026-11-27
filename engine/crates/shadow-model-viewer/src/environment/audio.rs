@@ -99,10 +99,11 @@ pub(super) fn update(
     // Hold strong handles for the looping sources until mission cleanup.
     let _ = (&state.rain, &state.wind);
     let master = gain.0.clamp(0., 1.);
+    let profile = &w.sample().profile;
     for (role, mut sink) in &mut sinks {
         let level = match role {
-            Sound::Rain => w.sample.rain * 0.48 + w.sample.hail * 0.1,
-            Sound::Wind => (w.sample.wind.length() / 24.).clamp(0., 1.) * 0.5,
+            Sound::Rain => profile.rain * 0.48 + profile.hail * 0.1,
+            Sound::Wind => (profile.wind.length() / 24.).clamp(0., 1.) * 0.5,
             Sound::Thunder(level) => *level,
         };
         sink.set_volume(Volume::Linear(level * master));

@@ -64,7 +64,13 @@ pub(super) fn update(
         });
         return;
     };
-    let response = Vec4::new(w.wetness, w.snow_cover, w.sample.temperature, 0.);
+    let sample = w.sample();
+    let response = Vec4::new(
+        sample.wetness,
+        sample.snow_cover,
+        sample.profile.temperature,
+        0.,
+    );
     for (entity, handle) in &targets {
         let Some(base) = standard.get(handle) else {
             continue;

@@ -61,9 +61,31 @@ impl Plugin for EnvironmentPlugin {
 #[derive(Resource)]
 pub(crate) struct MenuPaused;
 
+/// Current scene-wide conditions consumed by HUD, effects, and vehicles.
+pub(crate) struct EnvironmentSample {
+    profile: Sample,
+    hour: f32,
+    sun_to: Vec3,
+    sun_color: Vec3,
+    daylight: f32,
+    illumination: f32,
+    wetness: f32,
+    snow_cover: f32,
+}
+
+impl EnvironmentSample {
+    pub(crate) fn clock_label(&self) -> String {
+        // Adding whole hours can place an exact minute a few float ULPs below
+        // its boundary. Round to centiseconds before dropping the seconds.
+        let centiseconds = (f64::from(self.hour) * 360_000.).round() as u32;
+        let minutes = centiseconds / 6_000 % 1440;
+        format!("{:02}:{:02}", minutes / 60, minutes % 60)
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct Weather {
-    pub sample: Sample,
+    environment: EnvironmentSample,
     from: Sample,
     target: Sample,
     transition: f32,
@@ -73,13 +95,6 @@ pub(crate) struct Weather {
     clock_hours: f64,
     clock_options: (Option<f32>, f32),
     initial_hour: f32,
-    pub hour: f32,
-    pub sun_to: Vec3,
-    pub sun_color: Vec3,
-    pub daylight: f32,
-    pub illumination: f32,
-    pub wetness: f32,
-    pub snow_cover: f32,
     pub flash: f32,
     pub strike: Option<Vec3>,
     pub strike_generation: u64,
@@ -112,7 +127,16 @@ impl Weather {
         };
         let sample = preset.sample();
         let mut result = Self {
-            sample,
+            environment: EnvironmentSample {
+                profile: sample,
+                hour: initial_hour,
+                sun_to: Vec3::Y,
+                sun_color: Vec3::ONE,
+                daylight: 1.,
+                illumination: 1.,
+                wetness: 0.,
+                snow_cover: 0.,
+            },
             from: sample,
             target: sample,
             transition: 1.,
@@ -122,13 +146,6 @@ impl Weather {
             clock_hours: 0.,
             clock_options: (options.hour, options.day_minutes),
             initial_hour,
-            hour: initial_hour,
-            sun_to: Vec3::Y,
-            sun_color: Vec3::ONE,
-            daylight: 1.,
-            illumination: 1.,
-            wetness: 0.,
-            snow_cover: 0.,
             flash: 0.,
             strike: None,
             strike_generation: 0,
@@ -146,12 +163,8 @@ impl Weather {
         result.light(options, 0.);
         result
     }
-    pub(crate) fn clock_label(&self) -> String {
-        // Adding whole hours can place an exact minute a few float ULPs below
-        // its boundary. Round to centiseconds before dropping the seconds.
-        let centiseconds = (f64::from(self.hour) * 360_000.).round() as u32;
-        let minutes = centiseconds / 6_000 % 1440;
-        format!("{:02}:{:02}", minutes / 60, minutes % 60)
+    pub(crate) fn sample(&self) -> &EnvironmentSample {
+        &self.environment
     }
 
     pub fn prepare_snapshot(&mut self, probe: &Probe, options: &Options, focus: Vec3) {
@@ -167,7 +180,7 @@ impl Weather {
                 self.strike = Some(focus + Vec3::new(-65., 0., 45.));
                 self.strike_generation += 1;
                 self.lightning_age = 0.001;
-                self.flash = flash_envelope(self.lightning_age) * self.sample.thunder;
+                self.flash = flash_envelope(self.lightning_age) * self.environment.profile.thunder;
             }
         }
     }
@@ -184,20 +197,21 @@ impl Weather {
             .as_deref()
             .map(|p| if p.starts_with("night-") { 0. } else { 12. });
         let start = options.hour.or(legacy_hour).unwrap_or(self.initial_hour);
-        self.hour = (start + self.clock_hours as f32).rem_euclid(24.);
+        let environment = &mut self.environment;
+        environment.hour = (start + self.clock_hours as f32).rem_euclid(24.);
         // Source lighting tables may direct light downward even at midnight.
         // The same solar path drives both the mission clock and manual previews.
-        let angle = (self.hour - 6.) * std::f32::consts::PI / 12.;
+        let angle = (environment.hour - 6.) * std::f32::consts::PI / 12.;
         let (sin, cos) = angle.sin_cos();
-        self.sun_to = Vec3::new(-cos, sin * 0.9, sin * 0.4).normalize();
-        self.sun_color = self
+        environment.sun_to = Vec3::new(-cos, sin * 0.9, sin * 0.4).normalize();
+        environment.sun_color = self
             .tables
             .as_ref()
             .filter(|_| options.hour.is_none() && self.legacy_preview.is_none())
-            .and_then(|tables| tables.sample(self.hour).ok())
+            .and_then(|tables| tables.sample(environment.hour).ok())
             .map_or(Vec3::ONE, |(_, color)| color);
-        self.daylight = smooth(-0.08, 0.18, self.sun_to.y);
-        self.illumination = self.daylight * (0.48 + 0.52 * self.sample.sun);
+        environment.daylight = smooth(-0.08, 0.18, environment.sun_to.y);
+        environment.illumination = environment.daylight * (0.48 + 0.52 * environment.profile.sun);
     }
     fn random(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
@@ -207,33 +221,34 @@ impl Weather {
     }
     fn set_debug_preset(&mut self, preset: Preset) {
         self.selected = preset;
-        self.sample = preset.sample();
-        self.from = self.sample;
-        self.target = self.sample;
+        self.environment.profile = preset.sample();
+        self.from = self.environment.profile;
+        self.target = self.environment.profile;
         self.transition = 1.;
     }
     fn advance(&mut self, dt: f32, options: &Options, focus: Vec3) {
         if self.selected != options.preset {
-            self.from = self.sample;
+            self.from = self.environment.profile;
             self.target = options.preset.sample();
             self.transition = 0.;
             self.selected = options.preset;
         }
         self.transition = (self.transition + dt / 12.).min(1.);
-        self.sample = self
+        let profile = self
             .from
             .blend(self.target, smooth(0., 1., self.transition));
+        self.environment.profile = profile;
         self.elapsed += f64::from(dt);
-        self.wetness = (self.wetness
-            + dt * (self.sample.rain * 0.05 + self.sample.hail * 0.01 - self.sample.sun * 0.0015))
+        self.environment.wetness = (self.environment.wetness
+            + dt * (profile.rain * 0.05 + profile.hail * 0.01 - profile.sun * 0.0015))
             .clamp(0., 1.);
-        self.snow_cover = (self.snow_cover
-            + dt * (self.sample.snow * 0.004
-                - ((self.sample.temperature - 1.).max(0.) * 0.0004 + self.sample.rain * 0.002)))
+        self.environment.snow_cover = (self.environment.snow_cover
+            + dt * (profile.snow * 0.004
+                - ((profile.temperature - 1.).max(0.) * 0.0004 + profile.rain * 0.002)))
             .clamp(0., 1.);
         self.light(options, dt);
         self.lightning_age += dt;
-        self.flash = flash_envelope(self.lightning_age) * self.sample.thunder;
+        self.flash = flash_envelope(self.lightning_age) * profile.thunder;
         if let Some(delay) = &mut self.thunder_delay {
             *delay -= dt;
             if *delay <= 0. {
@@ -241,8 +256,8 @@ impl Weather {
                 self.thunder_delay = None;
             }
         }
-        if self.sample.thunder > 0.05 {
-            self.lightning_time -= dt * self.sample.thunder;
+        if profile.thunder > 0.05 {
+            self.lightning_time -= dt * profile.thunder;
             if self.lightning_time <= 0. {
                 let angle = self.random() * std::f32::consts::TAU;
                 let distance = 65. + self.random() * 180.;
@@ -252,7 +267,7 @@ impl Weather {
                 self.thunder_delay = Some(distance / 343.);
                 self.strike_generation += 1;
                 self.lightning_age = 0.;
-                self.flash = self.sample.thunder;
+                self.flash = profile.thunder;
                 self.lightning_time = 9. + self.random() * 20.;
             }
         }
@@ -303,8 +318,9 @@ fn control(
         w.advance(dt, &options, focus);
     }
     if let Some(c) = conditions.as_mut() {
-        c.illumination = w.illumination;
-        c.rain = w.sample.rain;
+        let sample = w.sample();
+        c.illumination = sample.illumination;
+        c.rain = sample.profile.rain;
     }
 }
 
@@ -334,18 +350,18 @@ mod tests {
         };
         let options = Options::default();
         let mut weather = Weather::new(&daylight, &options);
-        assert_eq!(weather.clock_label(), "12:04");
-        assert_eq!(weather.daylight, 1.);
+        assert_eq!(weather.sample().clock_label(), "12:04");
+        assert_eq!(weather.sample().daylight, 1.);
         weather.advance(4. * 300., &options, Vec3::ZERO);
-        assert_eq!(weather.clock_label(), "16:04");
+        assert_eq!(weather.sample().clock_label(), "16:04");
         weather.advance((8. * 60. - 4.) * 5., &options, Vec3::ZERO);
-        assert_eq!(weather.clock_label(), "00:00");
-        assert_eq!(weather.daylight, 0.);
-        assert!(weather.sun_to.y < 0.);
+        assert_eq!(weather.sample().clock_label(), "00:00");
+        assert_eq!(weather.sample().daylight, 0.);
+        assert!(weather.sample().sun_to.y < 0.);
         weather.advance(6. * 300., &options, Vec3::ZERO);
-        assert_eq!(weather.clock_label(), "06:00");
-        assert!(weather.sun_to.y.abs() < 0.0001);
-        assert!(weather.daylight > 0. && weather.daylight < 1.);
+        assert_eq!(weather.sample().clock_label(), "06:00");
+        assert!(weather.sample().sun_to.y.abs() < 0.0001);
+        assert!(weather.sample().daylight > 0. && weather.sample().daylight < 1.);
     }
 
     #[test]
