@@ -1,5 +1,5 @@
 //! Tactical orders and direct movement share the player animation and collisions.
-use super::{Blockout, Squad};
+use super::Squad;
 use crate::{
     localization::Language,
     map_scene::WORLD_SCALE,
@@ -47,8 +47,7 @@ impl TacticalInput {
         self.direct = target;
         if let Some(index) = target {
             let member = &mut squad.members[index];
-            stop(&mut member.actor);
-            member.queued.clear();
+            member.clear_orders();
             self.previous_follow = squad.following;
             squad.following = target;
             orbit.target = member.actor.camera_target();
@@ -132,7 +131,6 @@ pub(super) fn input(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<MapCamera>>,
     preview: Res<Preview>,
-    site: Option<Res<Blockout>>,
     mut squad: ResMut<Squad>,
     mut state: ResMut<TacticalInput>,
     mut orbit: ResMut<Orbit>,
@@ -161,19 +159,14 @@ pub(super) fn input(
         return;
     }
 
-    let selected = squad.mask() != 0;
-    if selected && keys.just_pressed(KeyCode::End) {
+    let command_actor = squad.command_actor();
+    if command_actor.is_some() && keys.just_pressed(KeyCode::End) {
         state.latched = !state.latched;
     }
-    let direct = (selected && (state.latched || ctrl)).then_some(squad.leader);
+    let direct = command_actor.filter(|_| state.latched || ctrl);
     state.set_direct(direct, &mut squad, &mut orbit);
     if keys.just_pressed(KeyCode::KeyH) {
-        for (index, member) in squad.members.iter_mut().enumerate() {
-            if direct.map_or(member.actor.selected, |target| target == index) {
-                stop(&mut member.actor);
-                member.queued.clear();
-            }
-        }
+        squad.halt(direct);
         state.gesture = None;
         state.clicks.0 = None;
         return;
@@ -213,11 +206,18 @@ pub(super) fn input(
             state.clicks.0 = None;
         }
     }
-    if squad.mask() != 0 && keys.just_pressed(KeyCode::KeyT) {
-        let leader = squad.leader;
-        squad.following = (squad.following != Some(leader)).then_some(leader);
+    if keys.just_pressed(KeyCode::KeyK) {
+        squad.promote();
+    }
+    if keys.just_pressed(KeyCode::KeyG) {
+        squad.regroup();
+    }
+    if keys.just_pressed(KeyCode::KeyT)
+        && let Some(index) = squad.command_actor()
+    {
+        squad.following = (squad.following != Some(index)).then_some(index);
         if squad.following.is_some() {
-            orbit.target = squad.members[leader].actor.camera_target();
+            orbit.target = squad.members[index].actor.camera_target();
         }
     }
     if mouse.just_pressed(MouseButton::Right) || cursor.is_none() {
@@ -283,7 +283,7 @@ pub(super) fn input(
                 .clicks
                 .register(time.elapsed_secs_f64(), gesture.start)
         };
-        squad.order(grid, site.as_deref(), point, running, gesture.additive);
+        squad.order(grid, point, running, gesture.additive);
     }
 }
 
@@ -302,7 +302,13 @@ pub(super) fn status(
         (true, false, false) => "Тактические приказы",
         (false, false, false) => "Tactical orders",
     };
-    let mut text = mode.to_string();
+    let commander = if russian {
+        "Командир"
+    } else {
+        "Commander"
+    };
+    let name = &squad.members[squad.commander].actor.display_name;
+    let mut text = format!("{mode}\n{commander} · {name}");
     for (i, member) in squad.members.iter().enumerate() {
         if !state
             .direct_actor()
@@ -321,6 +327,12 @@ pub(super) fn status(
                 "Нет прохода".into()
             } else {
                 "No route".into()
+            }
+        } else if member.in_formation && state.direct_actor() != Some(i) {
+            if russian {
+                "Следует за командиром".into()
+            } else {
+                "Following the commander".into()
             }
         } else {
             let queued = if russian {
@@ -365,8 +377,12 @@ mod tests {
             crate::player::tests::player(),
         ]);
         let grid = crate::player::tests::grid();
-        squad.order(&grid, None, Vec3::new(1.9, 0., -0.9), false, false);
-        squad.order(&grid, None, Vec3::new(1.8, 0., -1.6), false, true);
+        squad.select(1);
+        squad.order(&grid, Vec3::new(1.9, 0., -0.9), false, false);
+        squad.select(2);
+        squad.order(&grid, Vec3::new(1.9, 0., -0.9), false, false);
+        squad.order(&grid, Vec3::new(1.8, 0., -1.6), false, true);
+        squad.select(3);
         let other = squad.members[1].actor.destination.unwrap();
         let mut state = TacticalInput::default();
         let mut orbit = crate::training::player_view(Vec3::ZERO);
@@ -385,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn squad_can_replace_or_extend_the_selection_without_discarding_orders() {
+    fn selection_preserves_orders_and_does_not_reassign_the_commander() {
         let mut squad = Squad::new([
             crate::player::tests::player(),
             crate::player::tests::player(),
@@ -398,8 +414,14 @@ mod tests {
         squad.select(rectangle.result(2));
         assert_eq!(squad.mask(), 3);
         squad.select(2);
-        assert_eq!(squad.leader, 1);
+        assert_eq!(squad.command_actor(), Some(1));
+        assert_eq!(squad.commander, 0);
         assert_eq!(squad.members[0].actor.destination, Some(Vec3::X));
+        squad.promote();
+        assert_eq!(squad.commander, 1);
+        assert!(squad.members[0].in_formation);
+        assert!(!squad.members[1].in_formation);
+        assert!(squad.members[0].actor.destination.is_none());
     }
 
     #[test]
@@ -519,13 +541,47 @@ mod tests {
             .resource_mut::<ButtonInput<MouseButton>>()
             .release(MouseButton::Left);
         app.update();
-        let goals = app
-            .world()
-            .resource::<Squad>()
-            .actors()
-            .map(|actor| actor.destination.unwrap())
-            .collect::<Vec<_>>();
-        assert!(goals[0].distance(goals[1]) > 1.);
+        let squad = app.world().resource::<Squad>();
+        assert!(squad.members[0].actor.destination.is_some());
+        assert!(squad.members[1].actor.destination.is_none());
+        assert!(squad.members[1].in_formation);
+
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::Digit2);
+        app.update();
+        assert_eq!(app.world().resource::<Squad>().commander, 0);
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(KeyCode::KeyK);
+        app.update();
+        assert_eq!(app.world().resource::<Squad>().commander, 1);
+    }
+
+    #[test]
+    fn attached_member_follows_direct_movement_until_the_squad_halts() {
+        let mut grid = crate::player::tests::grid();
+        grid.config.edge = 1_000.;
+        grid.heights.fill(0.);
+        let mut leader = crate::player::tests::player();
+        leader.position = Vec3::new(10., 0., -10.);
+        let mut follower = crate::player::tests::player();
+        follower.position = Vec3::new(10., 0., -7.);
+        let mut squad = Squad::new([leader, follower]);
+        let mut state = TacticalInput::default();
+        let mut orbit = crate::training::player_view(Vec3::ZERO);
+        state.set_direct(Some(0), &mut squad, &mut orbit);
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::KeyW);
+        for _ in 0..240 {
+            direct_order(&mut squad.members[0].actor, &grid, &keys, 0., None);
+            squad.step(&grid, None, state.direct_actor(), 0.025);
+        }
+        assert!(squad.members[1].actor.position.z < -12.);
+        assert!(squad.members[1].actor.position.z > squad.members[0].actor.position.z + 1.);
+        squad.halt(state.direct_actor());
+        let stopped = squad.members[1].actor.position;
+        squad.step(&grid, None, state.direct_actor(), 0.025);
+        assert_eq!(squad.members[1].actor.position, stopped);
     }
 
     #[test]

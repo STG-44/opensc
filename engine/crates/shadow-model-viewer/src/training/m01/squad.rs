@@ -13,6 +13,8 @@ pub(super) struct Member {
     pub actor: Player,
     pub queued: VecDeque<Vec3>,
     pub render: Option<MemberRig>,
+    pub(super) in_formation: bool,
+    follow_target: Option<Vec3>,
 }
 
 pub(super) struct MemberRig {
@@ -20,12 +22,14 @@ pub(super) struct MemberRig {
     bones: Vec<Entity>,
     selection_ring: Entity,
     target_ring: Entity,
+    commander_ring: Entity,
 }
 
 #[derive(Resource)]
 pub(crate) struct Squad {
     pub(super) members: Vec<Member>,
-    pub(super) leader: usize,
+    pub(super) commander: usize,
+    trail: VecDeque<Vec3>,
     pub(super) following: Option<usize>,
     pub(crate) paused: bool,
 }
@@ -35,13 +39,17 @@ impl Squad {
         Self {
             members: actors
                 .into_iter()
-                .map(|actor| Member {
+                .enumerate()
+                .map(|(index, actor)| Member {
                     actor,
                     queued: VecDeque::new(),
                     render: None,
+                    in_formation: index != 0,
+                    follow_target: None,
                 })
                 .collect(),
-            leader: 0,
+            commander: 0,
+            trail: VecDeque::new(),
             following: None,
             paused: false,
         }
@@ -60,11 +68,6 @@ impl Squad {
         for (index, member) in self.members.iter_mut().enumerate() {
             member.actor.selected = mask & (1 << index) != 0;
         }
-        if !self.members[self.leader].actor.selected
-            && let Some(next) = self.members.iter().position(|member| member.actor.selected)
-        {
-            self.leader = next;
-        }
         if self
             .following
             .is_some_and(|index| !self.members[index].actor.selected)
@@ -73,57 +76,98 @@ impl Squad {
         }
     }
 
-    pub(super) fn reset(&mut self, orbit: &mut Orbit) {
-        for member in &mut self.members {
-            member.actor.reset_spawn();
-            member.queued.clear();
-        }
-        self.following = None;
-        self.leader = 0;
-        self.select(u8::MAX);
-        *orbit = player_view(self.members[self.leader].actor.camera_target());
+    pub(super) fn command_actor(&self) -> Option<usize> {
+        self.members[self.commander]
+            .actor
+            .selected
+            .then_some(self.commander)
+            .or_else(|| self.members.iter().position(|member| member.actor.selected))
     }
 
-    pub(super) fn order(
-        &mut self,
-        grid: &TerrainGrid,
-        site: Option<&Blockout>,
-        anchor: Vec3,
-        run: bool,
-        append: bool,
-    ) {
-        let heading = (anchor - self.members[self.leader].actor.position).with_y(0.);
-        let side = heading.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::X) * 1.35;
-        let mut first = true;
-        for index in std::iter::once(self.leader)
-            .chain((0..self.members.len()).filter(|i| *i != self.leader))
+    pub(super) fn promote(&mut self) {
+        if self.mask().count_ones() == 1
+            && let Some(index) = self.command_actor()
         {
+            self.commander = index;
             let member = &mut self.members[index];
-            if !member.actor.selected {
+            if member.in_formation {
+                member.clear_orders();
+                member.in_formation = false;
+            }
+            self.regroup();
+        }
+    }
+
+    pub(super) fn regroup(&mut self) {
+        self.trail.clear();
+        self.trail
+            .push_back(self.members[self.commander].actor.position);
+        for (index, member) in self.members.iter_mut().enumerate() {
+            if index != self.commander {
+                member.clear_orders();
+                member.in_formation = true;
+            }
+        }
+    }
+
+    pub(super) fn halt(&mut self, direct: Option<usize>) {
+        let selected =
+            |index, member: &Member| direct.map_or(member.actor.selected, |i| i == index);
+        let commander_stops = selected(self.commander, &self.members[self.commander]);
+        if commander_stops {
+            self.trail.clear();
+        }
+        for (index, member) in self.members.iter_mut().enumerate() {
+            if selected(index, member) || (commander_stops && member.in_formation) {
+                member.clear_orders();
+                if !commander_stops {
+                    member.in_formation = false;
+                }
+            }
+        }
+    }
+
+    pub(super) fn reset(&mut self, orbit: &mut Orbit) {
+        for (index, member) in self.members.iter_mut().enumerate() {
+            member.actor.reset_spawn();
+            member.queued.clear();
+            member.follow_target = None;
+            member.in_formation = index != 0;
+        }
+        self.trail.clear();
+        self.following = None;
+        self.commander = 0;
+        self.select(u8::MAX);
+        *orbit = player_view(self.members[self.commander].actor.camera_target());
+    }
+
+    pub(super) fn order(&mut self, grid: &TerrainGrid, anchor: Vec3, run: bool, append: bool) {
+        if player::surface(grid, anchor).is_none() {
+            return;
+        }
+        let group = self.mask().count_ones() > 1 && self.members[self.commander].actor.selected;
+        if group
+            && self
+                .members
+                .iter()
+                .enumerate()
+                .any(|(index, member)| index != self.commander && !member.in_formation)
+        {
+            self.regroup();
+        }
+        for (index, member) in self.members.iter_mut().enumerate() {
+            if !member.actor.selected || (group && index != self.commander) {
                 continue;
             }
-            let clear = |point| {
-                player::surface(grid, point).is_some_and(|height| {
-                    site.is_none_or(|site| {
-                        site.free(point.with_y(height), member.actor.body_height())
-                    })
-                })
-            };
-            let point = if first || !clear(anchor) {
-                anchor
-            } else {
-                [side, -side, side.cross(Vec3::Y), -side.cross(Vec3::Y)]
-                    .into_iter()
-                    .map(|offset| anchor + offset)
-                    .find(|&p| clear(p))
-                    .unwrap_or(anchor)
-            };
-            first = false;
+            if index != self.commander {
+                member.in_formation = false;
+                member.follow_target = None;
+            }
             if append && member.actor.destination.is_some() {
                 if member.queued.len() < 16 {
-                    member.queued.push_back(point);
+                    member.queued.push_back(anchor);
                 }
-            } else if member.actor.order(grid, point, run) {
+            } else if member.actor.order(grid, anchor, run) {
                 member.queued.clear();
             }
         }
@@ -139,32 +183,136 @@ impl Squad {
         if self.paused {
             return;
         }
-        let empty = ButtonInput::default();
+
+        let commander = &mut self.members[self.commander];
+        let previous = commander.actor.position;
+        commander.step(grid, site, direct == Some(self.commander), dt);
+        let position = commander.actor.position;
+        let running = commander.actor.running && commander.actor.destination.is_some();
+        let stalled = commander.actor.route.failed;
+        if stalled {
+            self.trail.clear();
+        } else if previous.xz().distance_squared(position.xz()) > 1e-8 {
+            if self.trail.is_empty() {
+                self.trail.push_back(previous);
+            }
+            if self
+                .trail
+                .back()
+                .is_some_and(|last| last.xz().distance(position.xz()) >= 0.45)
+            {
+                self.trail.push_back(position);
+                if self.trail.len() > 96 {
+                    self.trail.pop_front();
+                }
+            }
+        }
+
         for (index, member) in self.members.iter_mut().enumerate() {
-            let actor = &mut member.actor;
-            if Some(index) != direct {
-                if actor.route.failed {
-                    member.queued.clear();
-                } else if actor.destination.is_none()
-                    && let Some(next) = member.queued.pop_front()
+            if index == self.commander {
+                continue;
+            }
+            let manual = direct == Some(index);
+            if member.in_formation && !manual {
+                if stalled || member.actor.position.xz().distance(position.xz()) < 1.1 {
+                    member.clear_orders();
+                } else if let Some(target) = follow_goal(&self.trail, position, member, grid, site)
+                    && member
+                        .follow_target
+                        .is_none_or(|p| p.xz().distance(target.xz()) >= 0.7)
                 {
-                    actor.order(grid, next, false);
-                }
-                if let Some(site) = site {
-                    prepare_order(actor, grid, site);
+                    let catch_up = member.actor.position.xz().distance(position.xz()) > 4.5;
+                    member.actor.order(grid, target, running || catch_up);
+                    // Wait for the trail to move before retrying an unreachable point.
+                    member.follow_target = Some(target);
                 }
             }
-            let previous = actor.position;
-            actor.step(&empty, dt, grid);
-            if let Some(site) = site {
-                site.guard(actor, previous, grid);
-            }
+            member.step(grid, site, manual, dt);
         }
     }
 
     pub(crate) fn actors(&self) -> impl Iterator<Item = &Player> {
         self.members.iter().map(|member| &member.actor)
     }
+}
+
+impl Member {
+    pub(super) fn clear_orders(&mut self) {
+        self.actor.destination = None;
+        self.actor.route.clear();
+        self.queued.clear();
+        self.follow_target = None;
+    }
+
+    fn step(&mut self, grid: &TerrainGrid, site: Option<&Blockout>, direct: bool, dt: f32) {
+        let actor = &mut self.actor;
+        if !direct {
+            if actor.route.failed {
+                self.queued.clear();
+            } else if actor.destination.is_none()
+                && let Some(next) = self.queued.pop_front()
+            {
+                actor.order(grid, next, false);
+            }
+            if let Some(site) = site {
+                prepare_order(actor, grid, site);
+            }
+        }
+        let previous = actor.position;
+        actor.step(&ButtonInput::default(), dt, grid);
+        if let Some(site) = site {
+            site.guard(actor, previous, grid);
+        }
+    }
+}
+
+fn follow_goal(
+    trail: &VecDeque<Vec3>,
+    leader: Vec3,
+    member: &Member,
+    grid: &TerrainGrid,
+    site: Option<&Blockout>,
+) -> Option<Vec3> {
+    const GAP: f32 = 1.8;
+    let oldest = *trail.front()?;
+    let clearance = member.actor.body_height() * [1.0, 0.65, 0.25][member.actor.posture.index()];
+    let clear_ground = |point| {
+        let height = player::surface(grid, point)?;
+        let point = point.with_y(height);
+        site.is_none_or(|site| site.free(point, clearance))
+            .then_some(point)
+    };
+    // A regroup issued while stationary uses a clear slot near the commander.
+    if oldest.xz().distance_squared(leader.xz()) < 1e-4 && trail.len() == 1 {
+        let toward_member = (member.actor.position - leader)
+            .with_y(0.)
+            .try_normalize()
+            .unwrap_or(Vec3::X)
+            * GAP;
+        let side = toward_member.cross(Vec3::Y);
+        return [toward_member, side, -side, -toward_member]
+            .into_iter()
+            .filter_map(|offset| clear_ground(leader + offset))
+            .find(|&point| {
+                site.is_none_or(|site| {
+                    crate::navigation::World::blockout(grid, site, clearance).clear(leader, point)
+                })
+            });
+    }
+    let mut remaining = GAP;
+    let mut current = leader;
+    for &previous in trail.iter().rev() {
+        let length = current.xz().distance(previous.xz());
+        if length >= remaining {
+            let target = current.lerp(previous, remaining / length);
+            // A shortcut between sampled frames can graze a jamb. The recorded
+            // position is safe when the interpolated point lacks clearance.
+            return clear_ground(target).or_else(|| clear_ground(previous));
+        }
+        remaining -= length;
+        current = previous;
+    }
+    clear_ground(oldest)
 }
 
 pub(super) fn spawn(
@@ -178,8 +326,13 @@ pub(super) fn spawn(
 ) {
     let selected = meshes.add(Torus::new(0.48, 0.52));
     let target = meshes.add(Torus::new(0.27, 0.30));
+    let commander_circle = meshes.add(Torus::new(0.62, 0.66));
+    let gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1., 0.78, 0.2),
+        unlit: true,
+        ..default()
+    });
     for (index, member) in squad.members.iter_mut().enumerate() {
-        let mesh = |handle| Mesh3d(handle);
         let color = [Color::srgb(0.32, 1., 0.43), Color::srgb(0.44, 0.78, 1.)][index];
         let marker = materials.add(StandardMaterial {
             base_color: color,
@@ -198,7 +351,7 @@ pub(super) fn spawn(
             commands
                 .spawn((
                     player::SceneEntity,
-                    mesh(handle),
+                    Mesh3d(handle),
                     MeshMaterial3d(marker.clone()),
                     Transform::default(),
                     Visibility::Hidden,
@@ -210,6 +363,15 @@ pub(super) fn spawn(
             bones,
             selection_ring: ring(selected.clone()),
             target_ring: ring(target.clone()),
+            commander_ring: commands
+                .spawn((
+                    player::SceneEntity,
+                    Mesh3d(commander_circle.clone()),
+                    MeshMaterial3d(gold.clone()),
+                    Transform::default(),
+                    Visibility::Hidden,
+                ))
+                .id(),
         });
     }
     player::spawn_status(&mut commands, &mut fonts, *camera);
@@ -260,12 +422,16 @@ pub(super) fn visuals(
         for (entity, point) in [
             (rig.selection_ring, selected.then_some(actor.position)),
             (
+                rig.commander_ring,
+                (index == squad.commander).then_some(actor.position),
+            ),
+            (
                 rig.target_ring,
                 actor
                     .selected
                     .then_some(actor.destination)
                     .flatten()
-                    .filter(|_| Some(index) != input.direct_actor()),
+                    .filter(|_| Some(index) != input.direct_actor() && !member.in_formation),
             ),
         ] {
             if let Ok(mut show) = markers.get_mut(entity) {
@@ -284,5 +450,41 @@ pub(super) fn visuals(
     }
     for mut node in &mut overlay {
         selection::show_rectangle(&mut node, input.gesture());
+    }
+}
+
+#[cfg(test)]
+mod formation_tests {
+    use super::*;
+
+    #[test]
+    fn formation_follows_the_commander_including_after_promotion() {
+        let mut grid = crate::player::tests::grid();
+        grid.config.edge = 1000.;
+        grid.heights.fill(0.);
+        let mut first = crate::player::tests::player();
+        first.position = Vec3::new(8., 0., -10.);
+        let mut second = crate::player::tests::player();
+        second.position = Vec3::new(5., 0., -10.);
+        let mut squad = Squad::new([first, second]);
+        squad.select(1);
+        squad.order(&grid, Vec3::new(14., 0., -10.), false, false);
+        for _ in 0..800 {
+            squad.step(&grid, None, None, 0.025);
+        }
+        assert!((squad.members[0].actor.position.x - 14.).abs() < 0.03);
+        assert!((11.3..12.5).contains(&squad.members[1].actor.position.x));
+
+        squad.select(2);
+        squad.promote();
+        squad.order(&grid, Vec3::new(11., 0., -17.), false, false);
+        for _ in 0..800 {
+            squad.step(&grid, None, None, 0.025);
+        }
+        let commander = squad.members[1].actor.position;
+        let follower = squad.members[0].actor.position;
+        assert!(commander.distance(Vec3::new(11., 0., -17.)) < 0.03);
+        assert!(follower.z < -14.);
+        assert!((1.1..2.6).contains(&follower.distance(commander)));
     }
 }

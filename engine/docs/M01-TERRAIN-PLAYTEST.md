@@ -37,21 +37,24 @@ shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfiel
 
 Click a character or drag a selection box. Shift adds the box to the current
 selection and toggles a clicked character. Use 1 or 2 to select one member,
-or 3 to select both. Click the ground to walk, double-click to run and
-Shift-click to queue movement for the selection. Group orders request
-separate destination positions where space allows. A new plain ground
-click replaces orders for the selected members. H stops their current and
-queued orders.
-With the layout loaded, orders route through the headquarters doorway and
-report unreachable ground such as the lake. T follows the selected character.
+or 3 to select both. To appoint the commander, select one member and press K.
+The gold ring marks the current commander. Selection alone leaves the
+commander in place.
+
+Click the ground to walk, double-click to run and Shift-click to queue a move.
+A group order goes to the commander. Members in formation follow the route
+the commander actually takes, including through doors. Giving the other
+member an individual order takes that member out of formation. G brings
+the squad back together. A plain ground click replaces the selected orders.
+H stops the selection and, when the commander stops, any members following
+the commander. With the layout loaded, orders report unreachable ground
+such as the lake. T follows the selected character with the camera.
 
 End switches between tactical orders and direct control. Holding Ctrl uses
-direct control temporarily. In direct control, WASD or the arrow keys move
-relative to the camera and Shift runs. The camera follows the character,
-who faces the pointer when stationary. Direct control follows the lead
-member of the selection and takes over only that member's orders. Other
-members continue their active orders and queues. PgUp and PgDn step between stances.
-Space toggles prone and standing.
+direct control temporarily. WASD or the arrow keys move relative to the
+camera and Shift runs. With both members selected, direct control goes to
+the commander. The other member follows or continues an individual order.
+PgUp and PgDn step between stances. Space toggles prone and standing.
 
 In tactical mode, pan with WASD or a right drag, rotate and tilt with the
 arrow keys, and zoom with the wheel. Home returns to the spawn. F6 opens the

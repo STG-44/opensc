@@ -264,13 +264,7 @@ pub(super) fn run(
             if player::surface(&scene.grid, goal).is_none() {
                 return Err("M01 order is outside the terrain".into());
             }
-            squad.order(
-                &scene.grid,
-                site.as_ref(),
-                goal,
-                config.player_action == "run",
-                false,
-            );
+            squad.order(&scene.grid, goal, config.player_action == "run", false);
         } else {
             squad.members[0]
                 .actor
@@ -291,6 +285,7 @@ pub(super) fn run(
             "map": "M01",
             "player": actor.report(),
             "route_failed": actor.route.failed,
+            "commander": squad.commander + 1,
             "trace_metres": traces[0],
             "squad": squad.actors().zip(&traces).map(|(actor, trace)| serde_json::json!({
                 "name": actor.display_name,

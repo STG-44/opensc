@@ -1325,10 +1325,10 @@ pub(crate) fn setup(
     let mut label = if preview.first_area {
         match *language {
             crate::localization::Language::Russian => {
-                "M01 · ТИХАЯ ВОДА\nТест отряда\n\nЛКМ по бойцу / рамка — выбрать\nShift — добавить к выбору\n1 / 2 — боец · 3 — отряд\n\nЛКМ по земле — идти\nДвойной ЛКМ — бег\nShift + ЛКМ — в очередь\nH — остановить · T — слежение\n\nEnd / удержание Ctrl — напрямую\nWASD / стрелки — движение\nShift — бег\nPgUp / PgDn / пробел — стойки\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
+                "M01 · ТИХАЯ ВОДА\nТест отряда\n\nЛКМ по бойцу / рамка — выбрать\nShift — добавить к выбору\n1 / 2 — боец · 3 — отряд\nK — назначить командиром\nG — собрать отряд\n\nЛКМ по земле — идти\nДвойной ЛКМ — бег\nShift + ЛКМ — в очередь\nH — остановить · T — слежение\n\nEnd / удержание Ctrl — напрямую\nWASD / стрелки — движение\nShift — бег\nPgUp / PgDn / пробел — стойки\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
             }
             _ => {
-                "M01 · STILL WATER\nSquad playtest\n\nClick or drag a box to select\nShift to extend selection\n1 / 2 to select · 3 for both\n\nClick the ground to walk\nDouble-click to run\nShift + click to queue\nH to stop · T to follow\n\nEnd / hold Ctrl for direct control\nWASD / arrows to move\nShift to run\nPgUp / PgDn / Space for stances\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
+                "M01 · STILL WATER\nSquad playtest\n\nClick or drag a box to select\nShift to extend selection\n1 / 2 to select · 3 for both\nK to appoint commander\nG to regroup\n\nClick the ground to walk\nDouble-click to run\nShift + click to queue\nH to stop · T to follow\n\nEnd / hold Ctrl for direct control\nWASD / arrows to move\nShift to run\nPgUp / PgDn / Space for stances\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
             }
         }
         .into()
