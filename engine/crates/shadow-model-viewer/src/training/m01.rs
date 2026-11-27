@@ -9,8 +9,10 @@ use shadow_formats::{MtfMap, TerrainConfig, TerrainGrid};
 use std::{collections::HashSet, fs::File, io::Read, path::Path};
 
 mod blockout;
+mod squad;
 mod tactics;
 pub(crate) use blockout::Blockout;
+pub(crate) use squad::Squad;
 pub(super) use tactics::TacticalInput;
 
 const MAGIC: &[u8] = b"OpenSC heightfield 1\n";
@@ -211,60 +213,96 @@ pub(super) fn run(
     let mission = training_definition(catalog)?;
     let map = MtfMap::from_bytes(&catalog.read(&format!("maps/{}", mission.map))?)?;
     let template = player::initial_actor(&mission, &map.objects)?;
-    let actor = shadow_formats::MtfObject {
-        inventory: false,
-        class: template.class.clone(),
-        model: template.model.clone(),
-        name: template.name.clone(),
-        position: Some([spawn.x / WORLD_SCALE, spawn.y / WORLD_SCALE, 0.0]),
-        rotation: Some([
-            0.,
-            0.,
-            if site.is_some() {
-                std::f32::consts::FRAC_PI_2
-            } else {
-                0.
-            },
-        ]),
-        id: template.id,
-        properties: Vec::new(),
+    let heading = if site.is_some() {
+        std::f32::consts::FRAC_PI_2
+    } else {
+        0.
     };
-    let mut actor = player::prepare(catalog, &scene.grid, &actor)?;
-    crate::stance::prepare(catalog, &mut actor)?;
+    let mut members = vec![prepare_member(
+        catalog,
+        &scene.grid,
+        template,
+        spawn,
+        heading,
+    )?];
+    let next_spawn = [
+        Vec2::new(2.4, 1.7),
+        Vec2::new(2.4, -1.7),
+        Vec2::new(-2.4, 1.7),
+        Vec2::new(-2.4, -1.7),
+    ]
+    .into_iter()
+    .map(|offset| spawn + offset)
+    .find(|p| {
+        let point = Vec3::new(p.x, 0., -p.y);
+        player::surface(&scene.grid, point).is_some_and(|height| {
+            site.as_ref()
+                .is_none_or(|site| site.free(point.with_y(height), 1.8))
+        })
+    });
+    if let Some(next_spawn) = next_spawn {
+        let jack = map
+            .objects
+            .iter()
+            .find(|actor| {
+                actor.class.eq_ignore_ascii_case("Bipedal")
+                    && actor.name.eq_ignore_ascii_case("Jack")
+            })
+            .ok_or("Missing second test actor Jack in the local game installation")?;
+        members.push(prepare_member(
+            catalog,
+            &scene.grid,
+            jack,
+            next_spawn,
+            heading,
+        )?);
+    }
+    let mut squad = Squad::new(members);
     if let Some(output) = &config.player_json {
-        let seconds = config.player_seconds.unwrap_or(0.);
         if let Some(point) = config.m01_order {
             let goal = Vec3::new(point.x, 0., -point.y);
-            if !actor.order(&scene.grid, goal, config.player_action == "run") {
+            if player::surface(&scene.grid, goal).is_none() {
                 return Err("M01 order is outside the terrain".into());
             }
+            squad.order(
+                &scene.grid,
+                site.as_ref(),
+                goal,
+                config.player_action == "run",
+                false,
+            );
         } else {
-            actor.preview_action(&config.player_action, &scene.grid);
+            squad.members[0]
+                .actor
+                .preview_action(&config.player_action, &scene.grid);
         }
-        if let Some(site) = &site {
-            prepare_order(&mut actor, &scene.grid, site);
-        }
-        let input = ButtonInput::default();
-        let mut trace = vec![actor.position.to_array()];
-        for _ in 0..(seconds * 60.).round() as usize {
-            let previous = actor.position;
-            actor.step(&input, 1.0 / 60.0, &scene.grid);
-            if let Some(site) = &site {
-                site.guard(&mut actor, previous, &scene.grid);
+        let mut traces = squad
+            .actors()
+            .map(|actor| vec![actor.position.to_array()])
+            .collect::<Vec<_>>();
+        for _ in 0..(config.player_seconds.unwrap_or(0.) * 60.).round() as usize {
+            squad.step(&scene.grid, site.as_ref(), None, 1.0 / 60.0);
+            for (trace, actor) in traces.iter_mut().zip(squad.actors()) {
+                trace.push(actor.position.to_array());
             }
-            trace.push(actor.position.to_array());
         }
+        let actor = &squad.members[0].actor;
         let report = serde_json::json!({
             "map": "M01",
             "player": actor.report(),
             "route_failed": actor.route.failed,
-            "trace_metres": trace
+            "trace_metres": traces[0],
+            "squad": squad.actors().zip(&traces).map(|(actor, trace)| serde_json::json!({
+                "name": actor.display_name,
+                "route_failed": actor.route.failed,
+                "trace_metres": trace
+            })).collect::<Vec<_>>()
         });
         std::fs::write(output, serde_json::to_string_pretty(&report)? + "\n")?;
         return Ok(());
     }
     let orbit = config.camera_orbit.clone().unwrap_or_else(|| {
-        let mut orbit = player_view(actor.camera_target());
+        let mut orbit = player_view(squad.members[0].actor.camera_target());
         if site.is_some() {
             orbit.yaw = 1.7;
             orbit.pitch = 0.73;
@@ -301,17 +339,20 @@ pub(super) fn run(
         first_area: true,
     })
     .insert_resource(orbit)
-    .insert_resource(actor)
+    .insert_resource(squad)
     .init_resource::<TacticalInput>()
-    .add_systems(Startup, (setup, player::setup).chain())
+    .add_systems(
+        Startup,
+        (setup, squad::spawn, crate::selection::setup).chain(),
+    )
     .add_systems(
         Update,
         (
             tactics::input,
             controls,
-            update_player,
+            squad::tick,
             tactics::status,
-            update_markers,
+            squad::visuals,
             camera.in_set(CameraUpdate),
             capture,
         )
@@ -320,7 +361,7 @@ pub(super) fn run(
     if let Some(site) = site {
         app.insert_resource(site)
             .add_systems(Startup, blockout::spawn.after(setup))
-            .add_systems(Update, blockout::cutaway.after(update_player));
+            .add_systems(Update, blockout::cutaway.after(squad::tick));
     }
     if config.environment_json.is_some() || config.environment_time.is_some() {
         app.insert_resource(crate::environment::Probe::new(
@@ -333,6 +374,28 @@ pub(super) fn run(
         return Err("M01 terrain playtest failed; see the game log".into());
     }
     Ok(())
+}
+
+fn prepare_member(
+    catalog: &AssetCatalog,
+    grid: &TerrainGrid,
+    template: &shadow_formats::MtfObject,
+    spawn: Vec2,
+    heading: f32,
+) -> Result<player::Player, Box<dyn Error>> {
+    let actor = shadow_formats::MtfObject {
+        inventory: false,
+        class: template.class.clone(),
+        model: template.model.clone(),
+        name: template.name.clone(),
+        position: Some([spawn.x / WORLD_SCALE, spawn.y / WORLD_SCALE, 0.]),
+        rotation: Some([0., 0., heading]),
+        id: template.id,
+        properties: Vec::new(),
+    };
+    let mut player = player::prepare(catalog, grid, &actor)?;
+    crate::stance::prepare(catalog, &mut player)?;
+    Ok(player)
 }
 
 pub(super) fn prepare_order(actor: &mut player::Player, grid: &TerrainGrid, site: &Blockout) {

@@ -2,8 +2,8 @@
 
 The first area uses a 1,000 × 1,000 m cut inside the planned 4 × 4 km map.
 The playtest renders its heightfield and uses that same surface for ground
-orders, walking, running and camera clearance. The player uses a temporary
-character from the local game installation.
+orders, walking, running and camera clearance. The test squad uses two temporary
+characters from the local game installation when there is room at the spawn.
 
 ## Prepare the terrain
 
@@ -35,16 +35,22 @@ shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfiel
   --m01-layout engine/assets/m01/blockout.json
 ```
 
-Use a click to walk, a double-click to run and Shift-click to queue movement.
-A new plain click replaces the queue. H stops the current and queued orders.
+Click a character or drag a selection box. Shift adds the box to the current
+selection and toggles a clicked character. Use 1 or 2 to select one member,
+or 3 to select both. Click the ground to walk, double-click to run and
+Shift-click to queue movement for the selection. Group orders request
+separate destination positions where space allows. A new plain ground
+click replaces orders for the selected members. H stops their current and
+queued orders.
 With the layout loaded, orders route through the headquarters doorway and
 report unreachable ground such as the lake. T follows the selected character.
 
 End switches between tactical orders and direct control. Holding Ctrl uses
 direct control temporarily. In direct control, WASD or the arrow keys move
 relative to the camera and Shift runs. The camera follows the character,
-who faces the pointer when stationary. Turning on direct control takes over
-the test character's current orders. PgUp and PgDn step between stances.
+who faces the pointer when stationary. Direct control follows the lead
+member of the selection and takes over only that member's orders. Other
+members continue their active orders and queues. PgUp and PgDn step between stances.
 Space toggles prone and standing.
 
 In tactical mode, pan with WASD or a right drag, rotate and tilt with the
@@ -54,14 +60,15 @@ while the character is inside.
 
 The movement and direct-control conventions draw on the
 [Faces of War manual](https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/289300/manuals/manual%20ENG.pdf?t=1759490193).
-The next controls stages on M01 cover squad selection and individual orders,
-context actions for objects and cover, and direct aiming and fire alongside
-vehicle controls when the corresponding scenario content is ready.
+The next controls stages on M01 cover contextual actions for objects and
+cover, plus direct aiming, fire and vehicle controls as the corresponding
+scenario content becomes ready.
 
 Use `--scene-json /tmp/m01-scene.json` for map bounds and sample size, or
 `--player-json /tmp/m01-walk.json --player-action walk --player-seconds 25`
 for a movement trace. Add `--m01-order 272,880` to target the headquarters
-interior from the default blockout arrival point. The terrain preview uses
+interior from the default blockout arrival point. This diagnostic reports the
+traces for both members when the test squad can spawn. The terrain preview uses
 the spawn stored in the heightfield when no layout is supplied.
 Use `--weather fog --time-of-day 5.75 --day-length 0` to inspect the location
 in a pre-dawn setup. The layout marks the fictional village approach and

@@ -1,43 +1,57 @@
 //! Tactical orders and direct movement share the player animation and collisions.
+use super::{Blockout, Squad};
 use crate::{
     localization::Language,
     map_scene::WORLD_SCALE,
     orders,
     player::Player,
+    selection::Gesture,
     stance::Posture,
     training::{DIAGNOSTIC_PANEL_WIDTH, MapCamera, Orbit, Preview, actor_clicked},
 };
 use bevy::prelude::*;
 use shadow_formats::TerrainGrid;
-use std::collections::VecDeque;
 
 #[derive(Resource, Default)]
 pub(crate) struct TacticalInput {
     latched: bool,
-    direct: bool,
-    previous_follow: bool,
-    queued: VecDeque<Vec3>,
+    direct: Option<usize>,
+    previous_follow: Option<usize>,
+    gesture: Option<Gesture>,
     clicks: orders::ClickHistory,
 }
 
 impl TacticalInput {
     pub fn direct(&self) -> bool {
+        self.direct.is_some()
+    }
+
+    pub(super) fn direct_actor(&self) -> Option<usize> {
         self.direct
     }
 
-    fn set_direct(&mut self, enabled: bool, actor: &mut Player) {
-        if self.direct == enabled {
+    pub(crate) fn gesture(&self) -> Option<Gesture> {
+        self.gesture
+    }
+
+    fn set_direct(&mut self, target: Option<usize>, squad: &mut Squad, orbit: &mut Orbit) {
+        if self.direct == target {
             return;
         }
-        stop(actor);
-        self.queued.clear();
+        if let Some(index) = self.direct {
+            stop(&mut squad.members[index].actor);
+            squad.following = self.previous_follow.take();
+        }
+        self.gesture = None;
         self.clicks.0 = None;
-        self.direct = enabled;
-        if enabled {
-            self.previous_follow = actor.follow_camera;
-            actor.follow_camera = true;
-        } else {
-            actor.follow_camera = self.previous_follow;
+        self.direct = target;
+        if let Some(index) = target {
+            let member = &mut squad.members[index];
+            stop(&mut member.actor);
+            member.queued.clear();
+            self.previous_follow = squad.following;
+            squad.following = target;
+            orbit.target = member.actor.camera_target();
         }
     }
 }
@@ -118,7 +132,8 @@ pub(super) fn input(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<MapCamera>>,
     preview: Res<Preview>,
-    mut actor: ResMut<Player>,
+    site: Option<Res<Blockout>>,
+    mut squad: ResMut<Squad>,
     mut state: ResMut<TacticalInput>,
     mut orbit: ResMut<Orbit>,
 ) {
@@ -129,117 +144,202 @@ pub(super) fn input(
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let home = keys.just_pressed(KeyCode::Home);
     let pause = keys.just_pressed(KeyCode::Escape) || (ctrl && keys.just_pressed(KeyCode::KeyP));
-    let halt = keys.just_pressed(KeyCode::KeyH);
-    if home || halt {
-        state.queued.clear();
-        state.clicks.0 = None;
-    }
-    if home || pause || !window.focused || actor.playback.paused {
+    if home || pause || !window.focused {
         state.latched = false;
-        state.set_direct(false, &mut actor);
+        state.set_direct(None, &mut squad, &mut orbit);
+        state.gesture = None;
         state.clicks.0 = None;
+        if home && window.focused {
+            squad.reset(&mut orbit);
+        }
+        if pause && window.focused {
+            squad.paused = !squad.paused;
+        }
         return;
     }
-    if keys.just_pressed(KeyCode::End) && actor.selected {
+    if squad.paused {
+        return;
+    }
+
+    let selected = squad.mask() != 0;
+    if selected && keys.just_pressed(KeyCode::End) {
         state.latched = !state.latched;
     }
-    let direct = actor.selected && (state.latched || ctrl);
-    let entered = direct && !state.direct;
-    state.set_direct(direct, &mut actor);
-    if entered {
-        orbit.target = actor.camera_target();
-    }
-    if halt {
-        stop(&mut actor);
-        return;
-    }
-    if let Some(posture) = step_posture(&keys, actor.posture) {
-        actor.request_posture(posture);
-    }
-    let (camera, transform) = *camera;
-    let cursor = window
-        .cursor_position()
-        .filter(|p| p.x >= DIAGNOSTIC_PANEL_WIDTH);
-    let ray = || cursor.and_then(|p| camera.viewport_to_world(transform, p).ok());
-    if direct {
-        direct_order(&mut actor, grid, &keys, orbit.yaw, ray());
-        return;
-    }
-    if actor.route.failed {
-        state.queued.clear();
-    } else if actor.destination.is_none()
-        && let Some(next) = state.queued.pop_front()
-    {
-        actor.order(grid, next, false);
-    }
-    if !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-    let Some(cursor) = cursor else { return };
-    if actor_clicked(camera, transform, cursor, &actor) {
-        actor.selected = true;
+    let direct = (selected && (state.latched || ctrl)).then_some(squad.leader);
+    state.set_direct(direct, &mut squad, &mut orbit);
+    if keys.just_pressed(KeyCode::KeyH) {
+        for (index, member) in squad.members.iter_mut().enumerate() {
+            if direct.map_or(member.actor.selected, |target| target == index) {
+                stop(&mut member.actor);
+                member.queued.clear();
+            }
+        }
+        state.gesture = None;
         state.clicks.0 = None;
         return;
     }
-    if !actor.selected {
+    for (index, member) in squad.members.iter_mut().enumerate() {
+        if direct.map_or(member.actor.selected, |target| target == index)
+            && let Some(posture) = step_posture(&keys, member.actor.posture)
+        {
+            member.actor.request_posture(posture);
+        }
+    }
+
+    let (camera, transform) = *camera;
+    let in_world = |p: Vec2| {
+        p.is_finite()
+            && p.x >= DIAGNOSTIC_PANEL_WIDTH
+            && p.x <= window.width()
+            && p.y >= 0.
+            && p.y <= window.height()
+    };
+    let cursor = window.cursor_position();
+    if let Some(index) = direct {
+        let aim = cursor
+            .filter(|&p| in_world(p))
+            .and_then(|p| camera.viewport_to_world(transform, p).ok());
+        direct_order(&mut squad.members[index].actor, grid, &keys, orbit.yaw, aim);
         return;
     }
-    let Some(point) =
-        ray().and_then(|r| orders::terrain_hit(grid, r.origin, r.direction.as_vec3()))
-    else {
+
+    for (key, mask) in [
+        (KeyCode::Digit1, 1),
+        (KeyCode::Digit2, 2),
+        (KeyCode::Digit3, u8::MAX),
+    ] {
+        if keys.just_pressed(key) {
+            squad.select(mask);
+            state.clicks.0 = None;
+        }
+    }
+    if squad.mask() != 0 && keys.just_pressed(KeyCode::KeyT) {
+        let leader = squad.leader;
+        squad.following = (squad.following != Some(leader)).then_some(leader);
+        if squad.following.is_some() {
+            orbit.target = squad.members[leader].actor.camera_target();
+        }
+    }
+    if mouse.just_pressed(MouseButton::Right) || cursor.is_none() {
+        state.gesture = None;
+        return;
+    }
+    let cursor = cursor.unwrap();
+    if state.gesture.is_none() && mouse.just_pressed(MouseButton::Left) && in_world(cursor) {
+        let add = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        state.gesture = Some(Gesture::new(cursor, add, squad.mask(), false));
+    }
+    let Some(gesture) = &mut state.gesture else {
         return;
     };
-    let append = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if append {
+    gesture.update(cursor);
+    if mouse.pressed(MouseButton::Left) {
+        return;
+    }
+    let gesture = state.gesture.take().unwrap();
+    if gesture.dragged {
+        let inside = squad.actors().enumerate().fold(0, |mask, (index, actor)| {
+            let contains = camera
+                .world_to_viewport(transform, actor.camera_target())
+                .is_ok_and(|point| in_world(point) && gesture.rect().contains(point));
+            mask | (u8::from(contains) << index)
+        });
+        squad.select(gesture.result(inside));
         state.clicks.0 = None;
-        if actor.destination.is_some() {
-            if state.queued.len() < 16 {
-                state.queued.push_back(point);
-            }
+        return;
+    }
+    if !in_world(cursor) {
+        state.clicks.0 = None;
+        return;
+    }
+    if let Some((index, _)) = squad
+        .actors()
+        .enumerate()
+        .filter(|(_, actor)| actor_clicked(camera, transform, gesture.start, actor))
+        .min_by(|(_, a), (_, b)| {
+            transform
+                .translation()
+                .distance_squared(a.position)
+                .total_cmp(&transform.translation().distance_squared(b.position))
+        })
+    {
+        let bit = 1 << index;
+        let mask = if gesture.additive {
+            squad.mask() ^ bit
         } else {
-            actor.order(grid, point, false);
-        }
-    } else {
-        state.queued.clear();
-        let running = state.clicks.register(time.elapsed_secs_f64(), cursor);
-        actor.order(grid, point, running);
+            bit
+        };
+        squad.select(mask);
+        state.clicks.0 = None;
+    } else if squad.mask() != 0
+        && let Ok(ray) = camera.viewport_to_world(transform, gesture.start)
+        && let Some(point) = orders::terrain_hit(grid, ray.origin, ray.direction.as_vec3())
+    {
+        let running = if gesture.additive {
+            state.clicks.0 = None;
+            false
+        } else {
+            state
+                .clicks
+                .register(time.elapsed_secs_f64(), gesture.start)
+        };
+        squad.order(grid, site.as_deref(), point, running, gesture.additive);
     }
 }
 
 pub(super) fn status(
     state: Res<TacticalInput>,
-    actor: Res<Player>,
+    squad: Res<Squad>,
     language: Res<Language>,
     mut labels: Query<&mut Text, With<crate::player::Status>>,
 ) {
     let russian = *language == Language::Russian;
-    let mode = match (russian, state.direct) {
-        (true, true) => "Прямое управление",
-        (true, false) => "Тактические приказы",
-        (false, true) => "Direct control",
-        (false, false) => "Tactical orders",
+    let mode = match (russian, squad.paused, state.direct()) {
+        (true, true, _) => "Пауза",
+        (false, true, _) => "Paused",
+        (true, false, true) => "Прямое управление",
+        (false, false, true) => "Direct control",
+        (true, false, false) => "Тактические приказы",
+        (false, false, false) => "Tactical orders",
     };
-    let posture = if russian {
-        actor.posture.name()
-    } else {
-        ["Standing", "Crouched", "Prone"][actor.posture.index()]
-    };
-    let info = if actor.route.failed {
-        if russian {
-            "Нет прохода".into()
-        } else {
-            "No route".into()
+    let mut text = mode.to_string();
+    for (i, member) in squad.members.iter().enumerate() {
+        if !state
+            .direct_actor()
+            .map_or(member.actor.selected, |index| index == i)
+        {
+            continue;
         }
-    } else {
-        let queued = if russian {
-            "В очереди"
+        let actor = &member.actor;
+        let posture = if russian {
+            actor.posture.name()
         } else {
-            "Queued"
+            ["Standing", "Crouched", "Prone"][actor.posture.index()]
         };
-        format!("{queued} {}", state.queued.len())
-    };
+        let detail = if actor.route.failed {
+            if russian {
+                "Нет прохода".into()
+            } else {
+                "No route".into()
+            }
+        } else {
+            let queued = if russian {
+                "В очереди"
+            } else {
+                "Queued"
+            };
+            format!("{queued} {}", member.queued.len())
+        };
+        text.push_str(&format!(
+            "
+{} · {}
+{posture} · {detail}",
+            i + 1,
+            actor.display_name
+        ));
+    }
     for mut label in &mut labels {
-        label.set_if_neq(Text::new(format!("{mode}\n{posture} · {info}")));
+        label.set_if_neq(Text::new(text.clone()));
     }
 }
 
@@ -259,85 +359,173 @@ mod tests {
     }
 
     #[test]
-    fn direct_control_cancels_its_actors_orders_and_restores_camera_follow() {
-        let mut actor = crate::player::tests::player();
-        actor.destination = Some(Vec3::X);
-        let mut input = TacticalInput::default();
-        input.queued.push_back(Vec3::Z);
-        input.set_direct(true, &mut actor);
-        assert!(actor.follow_camera && input.direct());
-        assert!(actor.destination.is_none() && input.queued.is_empty());
-        let mut keys = ButtonInput::default();
-        keys.press(KeyCode::KeyW);
-        direct_order(&mut actor, &crate::player::tests::grid(), &keys, 0., None);
-        assert!(actor.destination.is_some());
-        input.set_direct(false, &mut actor);
-        assert!(!actor.follow_camera && !input.direct() && actor.destination.is_none());
+    fn direct_control_preserves_the_other_members_active_order_and_queue() {
+        let mut squad = Squad::new([
+            crate::player::tests::player(),
+            crate::player::tests::player(),
+        ]);
+        let grid = crate::player::tests::grid();
+        squad.order(&grid, None, Vec3::new(1.9, 0., -0.9), false, false);
+        squad.order(&grid, None, Vec3::new(1.8, 0., -1.6), false, true);
+        let other = squad.members[1].actor.destination.unwrap();
+        let mut state = TacticalInput::default();
+        let mut orbit = crate::training::player_view(Vec3::ZERO);
+        state.set_direct(Some(0), &mut squad, &mut orbit);
+        assert_eq!(squad.following, Some(0));
+        assert!(squad.members[0].actor.destination.is_none());
+        assert!(squad.members[0].queued.is_empty());
+        assert_eq!(squad.members[1].actor.destination, Some(other));
+        assert_eq!(squad.members[1].queued.len(), 1);
+        let before = squad.members[1].actor.position;
+        squad.step(&grid, None, state.direct_actor(), 0.2);
+        assert_ne!(squad.members[1].actor.position, before);
+        state.set_direct(None, &mut squad, &mut orbit);
+        assert!(squad.following.is_none());
+        assert_eq!(squad.members[1].actor.destination, Some(other));
     }
 
     #[test]
-    fn m01_input_switches_modes_and_stop_clears_pending_orders() {
+    fn squad_can_replace_or_extend_the_selection_without_discarding_orders() {
+        let mut squad = Squad::new([
+            crate::player::tests::player(),
+            crate::player::tests::player(),
+        ]);
+        squad.select(1);
+        squad.members[0].actor.destination = Some(Vec3::X);
+        let mut rectangle = Gesture::new(Vec2::ZERO, true, squad.mask(), false);
+        rectangle.update(Vec2::splat(10.));
+        assert!(rectangle.dragged);
+        squad.select(rectangle.result(2));
+        assert_eq!(squad.mask(), 3);
+        squad.select(2);
+        assert_eq!(squad.leader, 1);
+        assert_eq!(squad.members[0].actor.destination, Some(Vec3::X));
+    }
+
+    #[test]
+    fn mouse_box_and_ground_click_use_the_actual_squad_input_system() {
+        use bevy::camera::{CameraProjection, RenderTargetInfo};
+        let mut grid = crate::player::tests::grid();
+        grid.config.edge = 1000.;
+        grid.heights.fill(0.);
+        let mut members = [
+            crate::player::tests::player(),
+            crate::player::tests::player(),
+        ];
+        members[0].position = Vec3::new(8., 0., -5.);
+        members[1].position = Vec3::new(12., 0., -5.);
+        let mut squad = Squad::new(members);
+        squad.select(1);
+        let mut camera = Camera::default();
+        camera.computed.target_info = Some(RenderTargetInfo {
+            physical_size: UVec2::new(1280, 800),
+            ..default()
+        });
+        camera.computed.clip_from_view = PerspectiveProjection {
+            aspect_ratio: 1.6,
+            ..default()
+        }
+        .get_clip_from_view();
+        let view = GlobalTransform::from(
+            Transform::from_xyz(10., 10., 5.).looking_at(Vec3::new(10., 0., -10.), Vec3::Y),
+        );
+        let positions = squad
+            .actors()
+            .map(|actor| {
+                camera
+                    .world_to_viewport(&view, actor.camera_target())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let ground = camera
+            .world_to_viewport(&view, Vec3::new(10., 0., -13.))
+            .unwrap();
+        let from = positions[0].min(positions[1]) - Vec2::splat(20.);
+        let to = positions[0].max(positions[1]) + Vec2::splat(20.);
         let mut app = App::new();
-        app.init_resource::<Time>()
+        app.insert_resource(Time::<()>::default())
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<TacticalInput>()
-            .insert_resource(crate::player::tests::player())
+            .insert_resource(squad)
             .insert_resource(Preview {
                 scene: None,
                 screenshot: None,
                 focus: Vec3::ZERO,
-                span: 3.,
-                grid: Some(crate::player::tests::grid()),
+                span: 30.,
+                grid: Some(grid),
                 playable: true,
                 first_area: true,
             })
-            .insert_resource(Orbit {
-                target: Vec3::ZERO,
-                yaw: 0.,
-                pitch: 0.8,
-                distance: 8.,
-            })
+            .insert_resource(crate::training::player_view(Vec3::ZERO))
             .add_systems(Update, input);
-        app.world_mut().spawn(Window {
-            focused: true,
-            ..default()
-        });
-        app.world_mut()
-            .spawn((Camera::default(), GlobalTransform::default(), MapCamera));
-        let press = |app: &mut App, pressed: &[KeyCode]| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            for &key in pressed {
-                keys.press(key);
-            }
-        };
-        press(&mut app, &[KeyCode::End, KeyCode::KeyW]);
-        app.update();
-        assert!(app.world().resource::<TacticalInput>().direct());
-        assert!(app.world().resource::<Player>().destination.is_some());
-        press(&mut app, &[KeyCode::End]);
-        app.update();
-        assert!(!app.world().resource::<TacticalInput>().direct());
-        assert!(app.world().resource::<Player>().destination.is_none());
-        press(&mut app, &[KeyCode::ControlLeft]);
-        app.update();
-        assert!(app.world().resource::<TacticalInput>().direct());
-        press(&mut app, &[]);
-        app.update();
-        assert!(!app.world().resource::<TacticalInput>().direct());
+        let window = app
+            .world_mut()
+            .spawn(Window {
+                focused: true,
+                resolution: (1280, 800).into(),
+                ..default()
+            })
+            .id();
+        app.world_mut().spawn((camera, view, MapCamera));
 
+        let point = |app: &mut App, pos| {
+            app.world_mut()
+                .get_mut::<Window>(window)
+                .unwrap()
+                .set_cursor_position(Some(pos));
+        };
+        point(&mut app, from);
         app.world_mut()
-            .resource_mut::<TacticalInput>()
-            .queued
-            .extend([Vec3::new(1., 0., -1.), Vec3::new(2., 0., -1.)]);
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
         app.update();
-        assert_eq!(app.world().resource::<TacticalInput>().queued.len(), 1);
-        assert!(app.world().resource::<Player>().destination.is_some());
-        press(&mut app, &[KeyCode::KeyH]);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .clear_just_pressed(MouseButton::Left);
+        point(&mut app, to);
         app.update();
-        assert!(app.world().resource::<TacticalInput>().queued.is_empty());
-        assert!(app.world().resource::<Player>().destination.is_none());
+        assert!(
+            app.world()
+                .resource::<TacticalInput>()
+                .gesture
+                .unwrap()
+                .dragged
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        app.update();
+        assert_eq!(app.world().resource::<Squad>().mask(), 3);
+        assert!(
+            app.world()
+                .resource::<Squad>()
+                .actors()
+                .all(|actor| actor.destination.is_none())
+        );
+
+        point(&mut app, ground);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<Squad>()
+                .actors()
+                .all(|actor| actor.destination.is_none())
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        app.update();
+        let goals = app
+            .world()
+            .resource::<Squad>()
+            .actors()
+            .map(|actor| actor.destination.unwrap())
+            .collect::<Vec<_>>();
+        assert!(goals[0].distance(goals[1]) > 1.);
     }
 
     #[test]

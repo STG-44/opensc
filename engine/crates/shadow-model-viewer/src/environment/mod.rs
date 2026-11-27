@@ -301,6 +301,7 @@ fn control(
     weather: Option<ResMut<Weather>>,
     mut conditions: Option<ResMut<crate::vehicle::weather::Conditions>>,
     p: Option<Res<player::Player>>,
+    squad: Option<Res<training::Squad>>,
     inv: Option<Res<Inventory>>,
     tutorial: Option<Res<Tutorial>>,
     menu_paused: Option<Res<MenuPaused>>,
@@ -310,6 +311,7 @@ fn control(
         return;
     };
     let paused = p.is_some_and(|p| p.playback.paused)
+        || squad.is_some_and(|group| group.paused)
         || inv.is_some_and(|i| i.open)
         || tutorial.is_some_and(|t| t.pausing())
         || menu_paused.is_some();

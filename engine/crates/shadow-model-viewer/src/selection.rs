@@ -4,23 +4,33 @@ use bevy::prelude::*;
 
 const THRESHOLD: f32 = 6.0;
 #[derive(Clone, Copy, Debug)]
-struct Gesture {
-    start: Vec2,
+pub(crate) struct Gesture {
+    pub(crate) start: Vec2,
     end: Vec2,
-    additive: bool,
+    pub(crate) additive: bool,
     original: u8,
-    dragged: bool,
+    pub(crate) dragged: bool,
     synthetic: bool,
 }
 impl Gesture {
-    fn update(&mut self, cursor: Vec2) {
+    pub(crate) fn new(start: Vec2, additive: bool, original: u8, synthetic: bool) -> Self {
+        Self {
+            start,
+            end: start,
+            additive,
+            original,
+            dragged: false,
+            synthetic,
+        }
+    }
+    pub(crate) fn update(&mut self, cursor: Vec2) {
         self.end = cursor;
         self.dragged |= self.start.distance(cursor) >= THRESHOLD;
     }
-    fn rect(self) -> Rect {
+    pub(crate) fn rect(self) -> Rect {
         Rect::from_corners(self.start, self.end)
     }
-    fn result(self, inside: u8) -> u8 {
+    pub(crate) fn result(self, inside: u8) -> u8 {
         inside | if self.additive { self.original } else { 0 }
     }
 }
@@ -164,14 +174,12 @@ pub fn input(
             mouse.clear_just_pressed(MouseButton::Left);
             return;
         }
-        selection.gesture = Some(Gesture {
-            start: cursor,
-            end: cursor,
-            additive: keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight),
-            original: u8::from(john.selected) | (u8::from(party.jack.selected) << 1),
-            dragged: false,
+        selection.gesture = Some(Gesture::new(
+            cursor,
+            keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
+            u8::from(john.selected) | (u8::from(party.jack.selected) << 1),
             synthetic,
-        });
+        ));
     }
     if let Some(gesture) = &mut selection.gesture {
         mouse.clear_just_pressed(MouseButton::Left);
@@ -206,21 +214,22 @@ pub fn input(
     }
 }
 pub fn visuals(selection: Option<Res<Selection>>, mut overlay: Query<&mut Node, With<Overlay>>) {
+    let gesture = selection.as_ref().and_then(|s| s.gesture);
     for mut node in &mut overlay {
-        if let Some(g) = selection
-            .as_ref()
-            .and_then(|s| s.gesture)
-            .filter(|g| g.dragged)
-        {
-            let rect = g.rect();
-            node.display = Display::Flex;
-            node.left = px(rect.min.x);
-            node.top = px(rect.min.y);
-            node.width = px(rect.width());
-            node.height = px(rect.height());
-        } else {
-            node.display = Display::None;
-        }
+        show_rectangle(&mut node, gesture);
+    }
+}
+
+pub(crate) fn show_rectangle(node: &mut Node, gesture: Option<Gesture>) {
+    if let Some(gesture) = gesture.filter(|g| g.dragged) {
+        let rect = gesture.rect();
+        node.display = Display::Flex;
+        node.left = px(rect.min.x);
+        node.top = px(rect.min.y);
+        node.width = px(rect.width());
+        node.height = px(rect.height());
+    } else {
+        node.display = Display::None;
     }
 }
 

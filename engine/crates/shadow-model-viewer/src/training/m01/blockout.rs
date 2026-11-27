@@ -440,7 +440,7 @@ pub(super) fn spawn(
 
 pub(super) fn cutaway(
     keys: Res<ButtonInput<KeyCode>>,
-    actor: Res<player::Player>,
+    squad: Res<super::Squad>,
     site: Res<Blockout>,
     mut manual: Local<bool>,
     mut roof: Single<&mut Visibility, With<Roof>>,
@@ -448,8 +448,13 @@ pub(super) fn cutaway(
     if keys.just_pressed(KeyCode::KeyR) {
         *manual = !*manual;
     }
-    let offset = (actor.position - site.centre).xz().abs();
-    let inside = offset.cmplt(site.size / 2.).all();
+    let inside = squad.actors().any(|actor| {
+        (actor.position - site.centre)
+            .xz()
+            .abs()
+            .cmplt(site.size / 2.)
+            .all()
+    });
     roof.set_if_neq(if inside || *manual {
         Visibility::Hidden
     } else {

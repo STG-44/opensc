@@ -11,7 +11,7 @@ use shadow_formats::{AssetCatalog, HelpDefinitions, MissionDefinition, normalize
 use std::{env, error::Error, path::PathBuf};
 
 mod m01;
-pub(crate) use m01::Blockout;
+pub(crate) use m01::{Blockout, Squad};
 
 const DIAGNOSTIC_PANEL_WIDTH: f32 = 315.;
 struct Config {
@@ -1325,10 +1325,10 @@ pub(crate) fn setup(
     let mut label = if preview.first_area {
         match *language {
             crate::localization::Language::Russian => {
-                "M01 · ТИХАЯ ВОДА\nПроверка рельефа\n\nЛКМ — выбрать / идти\nДвойной ЛКМ — бег\nShift + ЛКМ — в очередь\nH — остановить · T — слежение\n\nEnd / удержание Ctrl — напрямую\nWASD / стрелки — движение\nShift — бег\nPgUp / PgDn / пробел — стойки\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
+                "M01 · ТИХАЯ ВОДА\nТест отряда\n\nЛКМ по бойцу / рамка — выбрать\nShift — добавить к выбору\n1 / 2 — боец · 3 — отряд\n\nЛКМ по земле — идти\nДвойной ЛКМ — бег\nShift + ЛКМ — в очередь\nH — остановить · T — слежение\n\nEnd / удержание Ctrl — напрямую\nWASD / стрелки — движение\nShift — бег\nPgUp / PgDn / пробел — стойки\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
             }
             _ => {
-                "M01 · STILL WATER\nTerrain playtest\n\nClick to select or walk\nDouble-click to run\nShift + click to queue\nH to stop · T to follow\n\nEnd / hold Ctrl for direct control\nWASD / arrows to move\nShift to run\nPgUp / PgDn / Space for stances\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
+                "M01 · STILL WATER\nSquad playtest\n\nClick or drag a box to select\nShift to extend selection\n1 / 2 to select · 3 for both\n\nClick the ground to walk\nDouble-click to run\nShift + click to queue\nH to stop · T to follow\n\nEnd / hold Ctrl for direct control\nWASD / arrows to move\nShift to run\nPgUp / PgDn / Space for stances\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
             }
         }
         .into()
@@ -1424,7 +1424,7 @@ pub(crate) fn controls(
     if preview.screenshot.is_some() {
         return;
     }
-    let playable = player.is_some();
+    let playable = player.is_some() || preview.first_area;
     let camera_speed = camera_options.as_ref().map_or(1.0, |p| p.speed);
     let ctrl = input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight);
     if (!playable && integrated.is_none() && input.just_pressed(KeyCode::Escape))
@@ -1432,7 +1432,7 @@ pub(crate) fn controls(
     {
         exit.write(AppExit::Success);
     }
-    if tactical.is_some_and(|state| state.direct()) {
+    if tactical.as_ref().is_some_and(|state| state.direct()) {
         return;
     }
     if !playable && input.just_pressed(KeyCode::Home) {
@@ -1449,6 +1449,9 @@ pub(crate) fn controls(
         *orbit = player_view(player.camera_target());
     }
     let pointer_blocked = pointer.as_ref().is_some_and(|s| s.world_blocked)
+        || tactical
+            .as_ref()
+            .is_some_and(|state| state.gesture().is_some())
         || (preview.first_area
             && window
                 .cursor_position()
@@ -2144,11 +2147,9 @@ pub(crate) fn update_player(
     dynamic: (
         Option<Res<crate::vehicle::Vehicle>>,
         Option<ResMut<crate::gate::Gate>>,
-        Option<Res<m01::Blockout>>,
-        Option<Res<m01::TacticalInput>>,
     ),
 ) {
-    let (vehicle, mut gate, site, tactical) = dynamic;
+    let (vehicle, mut gate) = dynamic;
     let Some(mut player) = player else {
         return;
     };
@@ -2158,9 +2159,6 @@ pub(crate) fn update_player(
     let mut game_input = input.clone();
     if integrated.is_some() {
         game_input.reset(KeyCode::Escape);
-    }
-    if tactical.as_ref().is_some_and(|state| state.direct()) {
-        game_input.reset(KeyCode::KeyT);
     }
     let ignored_input = ButtonInput::default();
     let input = if preview.screenshot.is_some() {
@@ -2203,12 +2201,6 @@ pub(crate) fn update_player(
                     height,
                 },
             );
-        } else if let Some(site) = &site
-            && tactical.as_ref().is_none_or(|state| !state.direct())
-            && !input.just_pressed(KeyCode::Home)
-            && !player.playback.paused
-        {
-            m01::prepare_order(&mut player, grid, site);
         }
         player.step(input, time.delta_secs(), grid);
     }
@@ -2220,11 +2212,6 @@ pub(crate) fn update_player(
             fence.as_ref().is_some_and(|f| f.handles_collision(id))
                 || gate.as_ref().is_some_and(|g| g.id == id)
         });
-    }
-    if let Some(site) = &site
-        && !input.just_pressed(KeyCode::Home)
-    {
-        site.guard(&mut player, previous, grid);
     }
     if let Some(f) = &mut fence
         && !vehicle.as_ref().is_some_and(|v| v.occupied)
@@ -2257,9 +2244,6 @@ pub(crate) fn update_player(
     }
     if input.just_pressed(KeyCode::Home) {
         *orbit = player_view(player.camera_target());
-    }
-    if preview.first_area {
-        return;
     }
     let clip = &player.clips[player.playback.selected];
     for mut text in &mut status {

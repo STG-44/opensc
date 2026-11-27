@@ -376,26 +376,30 @@ impl Player {
         self.focus.y * 2.0
     }
 
+    pub(crate) fn reset_spawn(&mut self) {
+        self.posture = crate::stance::Posture::Stand;
+        self.posture_transition = None;
+        self.rifle_equipped = false;
+        self.carry_movement = None;
+        self.weapon = None;
+        self.pickup_seconds = None;
+        self.action = None;
+        self.position = self.spawn;
+        self.heading = self.spawn_heading;
+        self.gesture = false;
+        self.destination = None;
+        self.route.clear();
+        self.playback.select(&self.clips, 0);
+        self.playback.reset(&self.clips);
+    }
+
     /// Вращаем только новую дельту движения: поворот не меняет пройденный путь.
     pub fn step(&mut self, input: &ButtonInput<KeyCode>, dt: f32, grid: &TerrainGrid) {
         if !dt.is_finite() || dt < 0.0 {
             return;
         }
         if input.just_pressed(KeyCode::Home) {
-            self.posture = crate::stance::Posture::Stand;
-            self.posture_transition = None;
-            self.rifle_equipped = false;
-            self.carry_movement = None;
-            self.weapon = None;
-            self.pickup_seconds = None;
-            self.action = None;
-            self.position = self.spawn;
-            self.heading = self.spawn_heading;
-            self.gesture = false;
-            self.destination = None;
-            self.route.clear();
-            self.playback.select(&self.clips, 0);
-            self.playback.reset(&self.clips);
+            self.reset_spawn();
         }
         let ctrl = input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight);
         if input.just_pressed(KeyCode::Escape) || (ctrl && input.just_pressed(KeyCode::KeyP)) {
@@ -557,7 +561,6 @@ pub fn setup(
     let Some(mut player) = player else {
         return;
     };
-    let rig = player.rig.take().expect("startup runs once");
     let ring = meshes.add(Torus::new(0.48, 0.52));
     let ring_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.3, 1.0, 0.4),
@@ -574,6 +577,26 @@ pub fn setup(
             Visibility::Hidden,
         ));
     }
+    spawn_rig(
+        &mut commands,
+        &mut player,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        armor.as_deref_mut(),
+    );
+    spawn_status(&mut commands, &mut fonts, *camera);
+}
+
+pub(crate) fn spawn_rig(
+    commands: &mut Commands,
+    player: &mut Player,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    mut armor: Option<&mut crate::armor::Armor>,
+) -> (Entity, Vec<Entity>) {
+    let rig = player.rig.take().expect("startup runs once");
     let root = commands
         .spawn((
             SceneEntity,
@@ -645,12 +668,16 @@ pub fn setup(
             ));
         }
     }
+    (root, bones)
+}
+
+pub(crate) fn spawn_status(commands: &mut Commands, fonts: &mut Assets<Font>, camera: Entity) {
     let font = fonts.add(Font::from_bytes(
         include_bytes!("../../shadow-viewer/assets/fonts/DejaVuSans.ttf").to_vec(),
     ));
     commands.spawn((
         SceneEntity,
-        UiTargetCamera(*camera),
+        UiTargetCamera(camera),
         Status,
         crate::hud::Diagnostic,
         GlobalZIndex(10),
