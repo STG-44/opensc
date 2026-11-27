@@ -202,7 +202,8 @@ pub(super) fn run(world: &mut World) {
             let geometry = world.resource::<crate::pickup::Pickup>();
             let nav = crate::navigation::World {
                 grid,
-                geometry,
+                geometry: Some(geometry),
+                blockout: None,
                 fence: Some(world.resource::<crate::fence::Fence>()),
                 gate: Some(world.resource::<crate::gate::Gate>()),
                 height: world.resource::<player::Player>().body_height(),

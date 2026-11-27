@@ -35,12 +35,28 @@ shadow-game --game-dir /path/to/local/game --m01-terrain /path/to/m01.heightfiel
   --m01-layout engine/assets/m01/blockout.json
 ```
 
-Left-click to select or walk and double-click to run. Use H to stop, T to
-follow, and Home to return to the spawn. Pan with WASD or a right drag, rotate
-and tilt with the arrow keys, and zoom with the wheel. F6 opens the weather
-debug panel. Use R to toggle the headquarters roof. The roof also clears
-automatically while the test character is inside. Walls stop movement, the
-east doorway stays open and the shoreline stops orders that enter the water.
+Use a click to walk, a double-click to run and Shift-click to queue movement.
+A new plain click replaces the queue. H stops the current and queued orders.
+With the layout loaded, orders route through the headquarters doorway and
+report unreachable ground such as the lake. T follows the selected character.
+
+End switches between tactical orders and direct control. Holding Ctrl uses
+direct control temporarily. In direct control, WASD or the arrow keys move
+relative to the camera and Shift runs. The camera follows the character,
+who faces the pointer when stationary. Turning on direct control takes over
+the test character's current orders. PgUp and PgDn step between stances.
+Space toggles prone and standing.
+
+In tactical mode, pan with WASD or a right drag, rotate and tilt with the
+arrow keys, and zoom with the wheel. Home returns to the spawn. F6 opens the
+weather panel. R toggles the headquarters roof, which clears automatically
+while the character is inside.
+
+The movement and direct-control conventions draw on the
+[Faces of War manual](https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/289300/manuals/manual%20ENG.pdf?t=1759490193).
+The next controls stages on M01 cover squad selection and individual orders,
+context actions for objects and cover, and direct aiming and fire alongside
+vehicle controls when the corresponding scenario content is ready.
 
 Use `--scene-json /tmp/m01-scene.json` for map bounds and sample size, or
 `--player-json /tmp/m01-walk.json --player-action walk --player-seconds 25`

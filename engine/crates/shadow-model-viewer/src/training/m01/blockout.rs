@@ -235,6 +235,21 @@ impl Blockout {
         })
     }
 
+    pub(crate) fn free(&self, point: Vec3, height: f32) -> bool {
+        point.y > self.water && !obstacles::occupied(point, height, self.triangles.iter().copied())
+    }
+
+    pub(crate) fn blocks_step(
+        &self,
+        from: Vec3,
+        to: Vec3,
+        height: f32,
+        grid: &TerrainGrid,
+    ) -> bool {
+        obstacles::sweep(from, to, height, self.triangles.iter().copied()).is_some()
+            || self.last_dry(from, to, grid).is_some()
+    }
+
     pub fn guard(&self, actor: &mut player::Player, previous: Vec3, grid: &TerrainGrid) {
         if previous == actor.position {
             return;

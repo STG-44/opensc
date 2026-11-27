@@ -38,12 +38,27 @@ impl Route {
 
 pub(crate) struct World<'a> {
     pub grid: &'a TerrainGrid,
-    pub geometry: &'a crate::pickup::Pickup,
+    pub geometry: Option<&'a crate::pickup::Pickup>,
+    pub blockout: Option<&'a crate::training::Blockout>,
     pub fence: Option<&'a crate::fence::Fence>,
     pub gate: Option<&'a crate::gate::Gate>,
     pub height: f32,
 }
-impl World<'_> {
+impl<'a> World<'a> {
+    pub fn blockout(
+        grid: &'a TerrainGrid,
+        blockout: &'a crate::training::Blockout,
+        height: f32,
+    ) -> Self {
+        Self {
+            grid,
+            blockout: Some(blockout),
+            geometry: None,
+            fence: None,
+            gate: None,
+            height,
+        }
+    }
     fn ignored(&self, id: [i32; 2]) -> bool {
         self.fence.is_some_and(|f| f.handles_collision(id)) || self.gate.is_some_and(|g| g.id == id)
     }
@@ -65,7 +80,10 @@ impl World<'_> {
             if (b.y - a.y).abs() > run * 1.0 + 0.02
                 || self
                     .geometry
-                    .movement_blocked(a, b, self.height, |id| self.ignored(id))
+                    .is_some_and(|g| g.movement_blocked(a, b, self.height, |id| self.ignored(id)))
+                || self
+                    .blockout
+                    .is_some_and(|site| site.blocks_step(a, b, self.height, self.grid))
                 || self.fence.is_some_and(|f| f.movement_hit(a, b).is_some())
                 || self.gate.is_some_and(|g| g.movement_hit(a, b).is_some())
             {
@@ -76,9 +94,9 @@ impl World<'_> {
         true
     }
     pub fn free(&self, p: Vec3) -> bool {
-        !self
-            .geometry
-            .occupied(p, self.height, |id| self.ignored(id))
+        self.geometry
+            .is_none_or(|g| !g.occupied(p, self.height, |id| self.ignored(id)))
+            && self.blockout.is_none_or(|site| site.free(p, self.height))
             && self.fence.is_none_or(|f| {
                 f.movement_hit(p - Vec3::X * 0.001, p + Vec3::X * 0.001)
                     .is_none()
@@ -97,7 +115,7 @@ pub(crate) fn prepare(actor: &mut crate::player::Player, world: &World<'_>) {
     };
     let revision = world
         .geometry
-        .revision()
+        .map_or(0, crate::pickup::Pickup::revision)
         .wrapping_add(u64::from(world.fence.is_some_and(|f| f.cut)))
         .wrapping_add(
             world
@@ -151,24 +169,28 @@ pub(crate) fn find_path(
     ground: impl Fn(Vec3) -> Option<f32>,
     clear: impl Fn(Vec3, Vec3) -> bool,
 ) -> Option<Vec<Vec3>> {
-    if !start.is_finite() || !goal.is_finite() || !extent.is_finite() || extent.min_element() <= 0.0
-    {
+    let inside = |p: Vec3| {
+        let horizontal = Vec2::new(p.x, -p.z);
+        p.is_finite() && horizontal.cmpge(Vec2::ZERO).all() && horizontal.cmple(extent).all()
+    };
+    if !extent.is_finite() || extent.min_element() <= 0.0 || !inside(start) || !inside(goal) {
         return None;
     }
     if clear(start, goal) {
         return Some(vec![goal]);
     }
     const CELL: f32 = 0.5;
-    let dims = (extent / CELL).ceil().as_uvec2() + UVec2::ONE;
-    let count = dims.x as usize * dims.y as usize;
-    if count > 2_000_000 {
+    let last = (extent / CELL).ceil();
+    if last.max_element() >= i32::MAX as f32 {
         return None;
     }
-    let point = |id: usize| {
+    let dims = last.as_ivec2() + IVec2::ONE;
+    let stride = dims.x as u64;
+    let point = |id: u64| {
         let p = Vec3::new(
-            (id as u32 % dims.x) as f32 * CELL,
+            (id % stride) as f32 * CELL,
             0.0,
-            -((id as u32 / dims.x) as f32 * CELL),
+            -((id / stride) as f32 * CELL),
         );
         (p.x <= extent.x && -p.z <= extent.y)
             .then(|| ground(p).map(|y| p.with_y(y)))
@@ -176,8 +198,8 @@ pub(crate) fn find_path(
     };
     let heuristic =
         |p: Vec3| (Vec2::new(p.x - goal.x, p.z - goal.z).length() / CELL * 1000.0).floor() as i32;
-    let mut costs = vec![i32::MAX; count];
-    let mut parents = vec![usize::MAX; count];
+    // Allocate only the cells reached by this order, even on kilometre-scale terrain.
+    let mut nodes = HashMap::<u64, (i32, Option<u64>)>::new();
     let mut queue = BinaryHeap::new();
     let seed = IVec2::new(
         (start.x / CELL).round() as i32,
@@ -186,23 +208,23 @@ pub(crate) fn find_path(
     for y in -1..=1 {
         for x in -1..=1 {
             let p = seed + IVec2::new(x, y);
-            if p.min_element() < 0 || p.x >= dims.x as i32 || p.y >= dims.y as i32 {
+            if p.min_element() < 0 || p.x >= dims.x || p.y >= dims.y {
                 continue;
             }
-            let id = p.y as usize * dims.x as usize + p.x as usize;
+            let id = p.y as u64 * stride + p.x as u64;
             if let Some(p) = point(id)
                 && clear(start, p)
             {
                 let cost = (start.distance(p) / CELL * 1000.0).ceil() as i32;
-                costs[id] = cost;
-                queue.push(Reverse((cost + heuristic(p), cost, id)));
+                nodes.insert(id, (cost, None));
+                queue.push(Reverse((cost.saturating_add(heuristic(p)), cost, id)));
             }
         }
     }
     let mut edges = HashMap::new();
     let mut visited = 0;
     while let Some(Reverse((_, cost, id))) = queue.pop() {
-        if costs[id] != cost {
+        if nodes[&id].0 != cost {
             continue;
         }
         visited += 1;
@@ -213,8 +235,8 @@ pub(crate) fn find_path(
         if Vec2::new(p.x - goal.x, p.z - goal.z).length() <= CELL * 2.0 && clear(p, goal) {
             let mut path = vec![goal, p];
             let mut cursor = id;
-            while parents[cursor] != usize::MAX {
-                cursor = parents[cursor];
+            while let Some(parent) = nodes[&cursor].1 {
+                cursor = parent;
                 path.push(point(cursor)?);
             }
             path.push(start);
@@ -230,19 +252,22 @@ pub(crate) fn find_path(
             }
             return Some(result);
         }
-        let cell = IVec2::new(id as i32 % dims.x as i32, id as i32 / dims.x as i32);
+        let cell = IVec2::new((id % stride) as i32, (id / stride) as i32);
         for y in -1i32..=1 {
             for x in -1i32..=1 {
                 if x == 0 && y == 0 {
                     continue;
                 }
                 let n = cell + IVec2::new(x, y);
-                if n.min_element() < 0 || n.x >= dims.x as i32 || n.y >= dims.y as i32 {
+                if n.min_element() < 0 || n.x >= dims.x || n.y >= dims.y {
                     continue;
                 }
-                let next = n.y as usize * dims.x as usize + n.x as usize;
+                let next = n.y as u64 * stride + n.x as u64;
                 let next_cost = cost + if x != 0 && y != 0 { 1415 } else { 1000 };
-                if next_cost >= costs[next] {
+                if nodes
+                    .get(&next)
+                    .is_some_and(|(known, _)| next_cost >= *known)
+                {
                     continue;
                 }
                 let Some(q) = point(next) else {
@@ -250,9 +275,12 @@ pub(crate) fn find_path(
                 };
                 let pass = *edges.entry((id, next)).or_insert_with(|| clear(p, q));
                 if pass {
-                    costs[next] = next_cost;
-                    parents[next] = id;
-                    queue.push(Reverse((next_cost + heuristic(q), next_cost, next)));
+                    nodes.insert(next, (next_cost, Some(id)));
+                    queue.push(Reverse((
+                        next_cost.saturating_add(heuristic(q)),
+                        next_cost,
+                        next,
+                    )));
                 }
             }
         }
@@ -283,7 +311,7 @@ mod tests {
         let start = Vec3::new(1.1, 0.0, -5.1);
         let goal = Vec3::new(8.9, 0.0, -5.1);
         let clear = |a, b| box_clear(a, b, Vec2::new(4.0, 3.0), Vec2::new(6.0, 7.0));
-        let path = find_path(start, goal, Vec2::splat(10.0), |_| Some(0.0), clear).unwrap();
+        let path = find_path(start, goal, Vec2::splat(1000.0), |_| Some(0.0), clear).unwrap();
         assert!(path.len() >= 3 && path.len() < 8);
         assert_eq!(*path.last().unwrap(), goal);
         let mut from = start;

@@ -11,6 +11,7 @@ use shadow_formats::{AssetCatalog, HelpDefinitions, MissionDefinition, normalize
 use std::{env, error::Error, path::PathBuf};
 
 mod m01;
+pub(crate) use m01::Blockout;
 
 const DIAGNOSTIC_PANEL_WIDTH: f32 = 315.;
 struct Config {
@@ -213,7 +214,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             )?;
             let world = crate::navigation::World {
                 grid: &scene.grid,
-                geometry: item.as_ref().unwrap(),
+                geometry: Some(item.as_ref().unwrap()),
+                blockout: None,
                 fence: fence.as_ref(),
                 gate: gate.as_ref(),
                 height: actor.body_height(),
@@ -1323,10 +1325,10 @@ pub(crate) fn setup(
     let mut label = if preview.first_area {
         match *language {
             crate::localization::Language::Russian => {
-                "M01 · ТИХАЯ ВОДА\nПроверка рельефа\n\nЛКМ — выбрать / идти\nДвойной ЛКМ — бег\nH — остановить · T — слежение\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
+                "M01 · ТИХАЯ ВОДА\nПроверка рельефа\n\nЛКМ — выбрать / идти\nДвойной ЛКМ — бег\nShift + ЛКМ — в очередь\nH — остановить · T — слежение\n\nEnd / удержание Ctrl — напрямую\nWASD / стрелки — движение\nShift — бег\nPgUp / PgDn / пробел — стойки\n\nWASD / удержание ПКМ — камера\nСтрелки — поворот и наклон\nКолесо — приближение\nHome — к старту\nEsc — пауза · Ctrl+X — выход"
             }
             _ => {
-                "M01 · STILL WATER\nTerrain playtest\n\nClick to select or walk\nDouble-click to run\nH to stop · T to follow\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
+                "M01 · STILL WATER\nTerrain playtest\n\nClick to select or walk\nDouble-click to run\nShift + click to queue\nH to stop · T to follow\n\nEnd / hold Ctrl for direct control\nWASD / arrows to move\nShift to run\nPgUp / PgDn / Space for stances\n\nWASD / right drag to pan\nArrows to rotate and tilt\nScroll to zoom\nHome to return to start\nEsc to pause · Ctrl+X to quit"
             }
         }
         .into()
@@ -1407,8 +1409,9 @@ pub(crate) fn controls(
     inventory: Option<Res<inventory::Inventory>>,
     native_selection: Option<Res<crate::selection::NativeSmoke>>,
     pointer: Option<Res<crate::selection::Selection>>,
-    camera_options: Option<Res<CameraOptions>>,
+    camera: (Option<Res<CameraOptions>>, Option<Res<m01::TacticalInput>>),
 ) {
+    let (camera_options, tactical) = camera;
     if inventory.is_some_and(|inv| inv.open || inv.consumed_input) {
         return;
     }
@@ -1428,6 +1431,9 @@ pub(crate) fn controls(
         || (ctrl && input.just_pressed(KeyCode::KeyX))
     {
         exit.write(AppExit::Success);
+    }
+    if tactical.is_some_and(|state| state.direct()) {
+        return;
     }
     if !playable && input.just_pressed(KeyCode::Home) {
         *orbit = overview(preview.focus, preview.span);
@@ -2139,9 +2145,10 @@ pub(crate) fn update_player(
         Option<Res<crate::vehicle::Vehicle>>,
         Option<ResMut<crate::gate::Gate>>,
         Option<Res<m01::Blockout>>,
+        Option<Res<m01::TacticalInput>>,
     ),
 ) {
-    let (vehicle, mut gate, site) = dynamic;
+    let (vehicle, mut gate, site, tactical) = dynamic;
     let Some(mut player) = player else {
         return;
     };
@@ -2151,6 +2158,9 @@ pub(crate) fn update_player(
     let mut game_input = input.clone();
     if integrated.is_some() {
         game_input.reset(KeyCode::Escape);
+    }
+    if tactical.as_ref().is_some_and(|state| state.direct()) {
+        game_input.reset(KeyCode::KeyT);
     }
     let ignored_input = ButtonInput::default();
     let input = if preview.screenshot.is_some() {
@@ -2186,12 +2196,19 @@ pub(crate) fn update_player(
                 &mut player,
                 &crate::navigation::World {
                     grid,
-                    geometry: item,
+                    geometry: Some(item),
+                    blockout: None,
                     fence: fence.as_deref(),
                     gate: gate.as_deref(),
                     height,
                 },
             );
+        } else if let Some(site) = &site
+            && tactical.as_ref().is_none_or(|state| !state.direct())
+            && !input.just_pressed(KeyCode::Home)
+            && !player.playback.paused
+        {
+            m01::prepare_order(&mut player, grid, site);
         }
         player.step(input, time.delta_secs(), grid);
     }
@@ -2242,10 +2259,6 @@ pub(crate) fn update_player(
         *orbit = player_view(player.camera_target());
     }
     if preview.first_area {
-        let Vec3 { x, y, z } = player.position;
-        for mut text in &mut status {
-            text.set_if_neq(Text::new(format!("X {x:.1} · Y {y:.1} · Z {z:.1} m")));
-        }
         return;
     }
     let clip = &player.clips[player.playback.selected];

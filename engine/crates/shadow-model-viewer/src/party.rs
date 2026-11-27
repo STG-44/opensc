@@ -541,7 +541,8 @@ pub fn tick(
             &mut party.jack,
             &crate::navigation::World {
                 grid,
-                geometry: &geometry,
+                geometry: Some(&geometry),
+                blockout: None,
                 fence: Some(&fence),
                 gate: Some(&gate),
                 height,

@@ -9,7 +9,9 @@ use shadow_formats::{MtfMap, TerrainConfig, TerrainGrid};
 use std::{collections::HashSet, fs::File, io::Read, path::Path};
 
 mod blockout;
-pub(super) use blockout::Blockout;
+mod tactics;
+pub(crate) use blockout::Blockout;
+pub(super) use tactics::TacticalInput;
 
 const MAGIC: &[u8] = b"OpenSC heightfield 1\n";
 const HEADER_BYTES: usize = 20;
@@ -228,6 +230,7 @@ pub(super) fn run(
         properties: Vec::new(),
     };
     let mut actor = player::prepare(catalog, &scene.grid, &actor)?;
+    crate::stance::prepare(catalog, &mut actor)?;
     if let Some(output) = &config.player_json {
         let seconds = config.player_seconds.unwrap_or(0.);
         if let Some(point) = config.m01_order {
@@ -237,6 +240,9 @@ pub(super) fn run(
             }
         } else {
             actor.preview_action(&config.player_action, &scene.grid);
+        }
+        if let Some(site) = &site {
+            prepare_order(&mut actor, &scene.grid, site);
         }
         let input = ButtonInput::default();
         let mut trace = vec![actor.position.to_array()];
@@ -248,8 +254,12 @@ pub(super) fn run(
             }
             trace.push(actor.position.to_array());
         }
-        let report =
-            serde_json::json!({"map": "M01", "player": actor.report(), "trace_metres": trace});
+        let report = serde_json::json!({
+            "map": "M01",
+            "player": actor.report(),
+            "route_failed": actor.route.failed,
+            "trace_metres": trace
+        });
         std::fs::write(output, serde_json::to_string_pretty(&report)? + "\n")?;
         return Ok(());
     }
@@ -292,14 +302,15 @@ pub(super) fn run(
     })
     .insert_resource(orbit)
     .insert_resource(actor)
-    .init_resource::<orders::ClickHistory>()
+    .init_resource::<TacticalInput>()
     .add_systems(Startup, (setup, player::setup).chain())
     .add_systems(
         Update,
         (
+            tactics::input,
             controls,
-            issue_orders,
             update_player,
+            tactics::status,
             update_markers,
             camera.in_set(CameraUpdate),
             capture,
@@ -322,6 +333,14 @@ pub(super) fn run(
         return Err("M01 terrain playtest failed; see the game log".into());
     }
     Ok(())
+}
+
+pub(super) fn prepare_order(actor: &mut player::Player, grid: &TerrainGrid, site: &Blockout) {
+    let height = actor.body_height() * [1.0, 0.65, 0.25][actor.posture.index()];
+    crate::navigation::prepare(
+        actor,
+        &crate::navigation::World::blockout(grid, site, height),
+    );
 }
 
 fn grounded_camera(orbit: &mut Orbit, grid: &TerrainGrid) -> Transform {

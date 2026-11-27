@@ -75,7 +75,8 @@ pub(super) fn fixtures(world: &mut World) -> Vec<Fixture> {
     let height = world.resource::<player::Player>().body_height();
     let nav = navigation::World {
         grid,
-        geometry,
+        geometry: Some(geometry),
+        blockout: None,
         fence: Some(world.resource::<crate::fence::Fence>()),
         gate: Some(world.resource::<crate::gate::Gate>()),
         height,
@@ -153,7 +154,8 @@ impl Checks {
                 let geometry = world.resource::<crate::pickup::Pickup>();
                 let nav = navigation::World {
                     grid,
-                    geometry,
+                    geometry: Some(geometry),
+                    blockout: None,
                     fence: Some(world.resource::<crate::fence::Fence>()),
                     gate: Some(world.resource::<crate::gate::Gate>()),
                     height: world.resource::<player::Player>().body_height(),
@@ -301,7 +303,8 @@ impl Checks {
                 let jack_height = world.resource::<crate::party::Party>().jack.body_height() * 0.9;
                 let nav = navigation::World {
                     grid,
-                    geometry,
+                    geometry: Some(geometry),
+                    blockout: None,
                     fence: Some(world.resource::<crate::fence::Fence>()),
                     gate: Some(world.resource::<crate::gate::Gate>()),
                     height,
